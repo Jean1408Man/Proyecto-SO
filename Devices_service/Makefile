@@ -1,44 +1,65 @@
-# ------------------------------------------------------------------------
-# Makefile para Devices_service (MatCom Guard – detección de dispositivos)
-# ------------------------------------------------------------------------
+###############################################################################
+#  Makefile – Proyecto “Devices_service”
+#
+#  Compila todos los .c que haya en src/ y deja el ejecutable en el raíz
+#  de Devices_service.  Usa OpenSSL (‑lcrypto) para SHA‑256.
+#
+#  Objetivos principales:
+#     make          → compila en modo optimizado (-O2)
+#     make debug    → compila con símbolos de depuración (-g)
+#     make clean    → borra objetos y ejecutables
+#     make test     → compila y lanza los tests que haya en tests/
+###############################################################################
 
-# Compilador y opciones
-CC       := gcc
-CFLAGS   := -Wall -Wextra -Iinclude -g
+# ──────── Variables configurables ────────────────────────────────────────────
+CC       ?= gcc
+CFLAGS   ?= -std=c11 -Wall -Wextra -O2
+CPPFLAGS ?= -Iinclude             # busca cabeceras locales
+LDFLAGS  ?= -lcrypto              # OpenSSL (SHA‑256)
+TARGET    = devices_service       # nombre del binario principal
 
-# Directorios
-SRCDIR   := src
-INCDIR   := include
-BUILDDIR := build
+# Si quieres compilar con libudev más adelante:
+# LDFLAGS += -ludev
 
-# Ejecutable final
-TARGET   := $(BUILDDIR)/devices_service
+# ──────── Rutas y archivos automáticos ───────────────────────────────────────
+SRC := $(wildcard src/*.c)
+OBJ := $(patsubst src/%.c, build/%.o, $(SRC))
 
-# Busca todos los .c en src/
-SOURCES  := $(wildcard $(SRCDIR)/*.c)
-# Convierte src/foo.c → build/foo.o
-OBJECTS  := $(patsubst $(SRCDIR)/%.c,$(BUILDDIR)/%.o,$(SOURCES))
+# tests : recoge todo .c en tests/ (por ahora opcional)
+TEST_SRC := $(wildcard tests/*.c)
+TEST_OBJ := $(patsubst tests/%.c, build/%.test.o, $(TEST_SRC))
+TEST_BIN := tests/run_tests
 
-# Target por defecto: compilar todo
+# Crea la carpeta build/ si no existe (silenciosamente)
+$(shell mkdir -p build)
+
+# ──────── Reglas genéricas ───────────────────────────────────────────────────
 all: $(TARGET)
 
-# Enlaza el ejecutable a partir de los objetos
-$(TARGET): $(OBJECTS) | $(BUILDDIR)
-	@echo "🔗 Enlazando ejecutable: $@"
-	$(CC) $(CFLAGS) $^ -o $@
+# Regla para objetos dentro de build/
+build/%.o: src/%.c include/*.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-# Regla genérica: compilar cada .c en su .o correspondiente
-$(BUILDDIR)/%.o: $(SRCDIR)/%.c | $(BUILDDIR)
-	@echo "⚙️  Compilando $< → $@"
-	$(CC) $(CFLAGS) -c $< -o $@
+# Enlazado final
+$(TARGET): $(OBJ)
+	$(CC) $(OBJ) $(LDFLAGS) -o $@
+	@echo "✓ Generado $(TARGET)"
 
-# Asegura que exista el directorio build
-$(BUILDDIR):
-	@mkdir -p $(BUILDDIR)
+# ──────── Objetivos auxiliares ───────────────────────────────────────────────
+# Modo depuración: recompila con -g -O0
+debug: CFLAGS = -std=c11 -Wall -Wextra -g -O0
+debug: clean all
 
-# Limpia todo lo generado
 clean:
-	@echo "🧹 Limpiando archivos compilados..."
-	rm -rf $(BUILDDIR)
+	@echo "Limpiando..."
+	@rm -f $(OBJ) $(TEST_OBJ) $(TARGET) $(TEST_BIN)
 
-.PHONY: all clean
+# ──────── Tests (opcional) ───────────────────────────────────────────────────
+$(TEST_BIN): $(TEST_OBJ) $(filter-out src/main.c,$(SRC))
+	$(CC) $(CPPFLAGS) $(CFLAGS) $^ $(LDFLAGS) -o $@
+
+test: $(TEST_BIN)
+	@echo "── Ejecutando tests ──"
+	@./$(TEST_BIN)
+
+.PHONY: all debug clean test
