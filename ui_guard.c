@@ -84,8 +84,14 @@ static void iniciar_socket_servidor(GtkTextBuffer *buffer) {
 
 static void lanzar_devices_service() {
     GError *error = NULL;
-    gchar *argv[] = {"./Devices_service/devices_service", NULL};
 
+    // Verifica si ya está corriendo
+    if (system("pgrep -x devices_service > /dev/null") == 0) {
+        printf("⚠️  devices_service ya está en ejecución.\n");
+        return;
+    }
+
+    gchar *argv[] = {"./Devices_service/devices_service", NULL};
     if (!g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &error)) {
         fprintf(stderr, "❌ Error al lanzar devices_service: %s\n", error->message);
         g_error_free(error);
