@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <pthread.h>
 
 static MountState *tabla = NULL;
 
@@ -32,17 +33,37 @@ static void refresh_mounts(void)
     }
 }
 
+typedef struct {
+    MountState *ms;
+} ScanArgs;
+
+void *scan_device_thread(void *arg) {
+    ScanArgs *args = (ScanArgs *)arg;
+    MountState *ms = args->ms;
+
+    FileInfo *nuevo = build_snapshot(ms->mountpoint);
+    if (ms->snapshot) diff_snapshots(ms->snapshot, nuevo);
+    free_snapshot(ms->snapshot);
+    ms->snapshot = nuevo;
+
+    free(args);
+    return NULL;
+}
+
 void run_monitor(unsigned intervalo)
 {
     while (1) {
         refresh_mounts();
+
         MountState *ms, *tmp;
         HASH_ITER(hh, tabla, ms, tmp) {
-            FileInfo *nuevo = build_snapshot(ms->mountpoint);
-            if (ms->snapshot) diff_snapshots(ms->snapshot, nuevo);
-            free_snapshot(ms->snapshot);
-            ms->snapshot = nuevo;
+            pthread_t hilo;
+            ScanArgs *args = malloc(sizeof *args);
+            args->ms = ms;
+            pthread_create(&hilo, NULL, scan_device_thread, args);
+            pthread_detach(hilo);
         }
+
         sleep(intervalo);
     }
 }
