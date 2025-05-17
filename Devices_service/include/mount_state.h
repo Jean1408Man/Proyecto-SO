@@ -3,6 +3,7 @@
 
 #include "file_info.h"   /* usa FileInfo */
 #include "uthash.h"
+#include <pthread.h>
 
 /* --- Estado de un montaje --- */
 typedef struct mount_state {
@@ -11,6 +12,8 @@ typedef struct mount_state {
     char fstype[16];
     FileInfo *snapshot;     /* tabla de FileInfo */
     int  seen;              /* flag interno */
+    int  escaneando;        /* para evitar hilos duplicados */
+    pthread_mutex_t mutex;  /* para proteger acceso concurrente al snapshot */
     UT_hash_handle hh;      /* enlace uthash */
 } MountState;
 

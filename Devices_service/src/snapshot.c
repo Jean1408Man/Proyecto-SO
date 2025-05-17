@@ -10,7 +10,6 @@
 #include <openssl/sha.h>
 #include "file_info.h"
 
-static FileInfo *tabla = NULL;
 static const char *base_root;
 
 #define MAX_THREADS 10
@@ -34,7 +33,7 @@ static int calc_sha(const char *p, uint8_t h[32]) {
     fclose(f); SHA256_Final(h, &c); return 0;
 }
 
-void procesar_archivo(const char *rel_path, const struct stat *st) {
+void procesar_archivo(const char *rel_path, const struct stat *st, FileInfo **tabla) {
     if (es_ruta_ignorada(rel_path)) return;
 
     uint8_t h[32]; if (calc_sha(rel_path, h)) return;
@@ -46,13 +45,18 @@ void procesar_archivo(const char *rel_path, const struct stat *st) {
     fi->mtime = st->st_mtime;
 
     pthread_mutex_lock(&tabla_mutex);
-    HASH_ADD_KEYPTR(hh, tabla, fi->rel_path, strlen(fi->rel_path), fi);
+    HASH_ADD_KEYPTR(hh, *tabla, fi->rel_path, strlen(fi->rel_path), fi);
     pthread_mutex_unlock(&tabla_mutex);
 }
 
 void *escanear_directorio_thread(void *arg);
 
-void escanear_directorio(const char *path) {
+typedef struct {
+    const char *path;
+    FileInfo **tabla;
+} ScanArgs;
+
+void escanear_directorio(const char *path, FileInfo **tabla) {
     DIR *dir = opendir(path);
     if (!dir) return;
 
@@ -74,25 +78,29 @@ void escanear_directorio(const char *path) {
                 hilos_activos++;
                 pthread_mutex_unlock(&contador_mutex);
 
-                char *ruta = strdup(full_path);
+                ScanArgs *args = malloc(sizeof(ScanArgs));
+                args->path = strdup(full_path);
+                args->tabla = tabla;
+
                 pthread_t hilo;
-                pthread_create(&hilo, NULL, escanear_directorio_thread, ruta);
+                pthread_create(&hilo, NULL, escanear_directorio_thread, args);
                 pthread_detach(hilo);
             } else {
                 pthread_mutex_unlock(&contador_mutex);
-                escanear_directorio(full_path);
+                escanear_directorio(full_path, tabla);
             }
         } else if (S_ISREG(st.st_mode)) {
-            procesar_archivo(full_path, &st);
+            procesar_archivo(full_path, &st, tabla);
         }
     }
     closedir(dir);
 }
 
 void *escanear_directorio_thread(void *arg) {
-    char *path = (char *)arg;
-    escanear_directorio(path);
-    free(path);
+    ScanArgs *args = (ScanArgs *)arg;
+    escanear_directorio(args->path, args->tabla);
+    free((void *)args->path);
+    free(args);
 
     pthread_mutex_lock(&contador_mutex);
     hilos_activos--;
@@ -101,9 +109,10 @@ void *escanear_directorio_thread(void *arg) {
 }
 
 FileInfo *build_snapshot(const char *root) {
-    tabla = NULL;
+    FileInfo *tabla_local = NULL;
     base_root = root;
-    escanear_directorio(root);
+
+    escanear_directorio(root, &tabla_local);
 
     while (1) {
         pthread_mutex_lock(&contador_mutex);
@@ -112,7 +121,8 @@ FileInfo *build_snapshot(const char *root) {
         if (activos == 0) break;
         usleep(100000);
     }
-    return tabla;
+
+    return tabla_local;
 }
 
 void diff_snapshots(FileInfo *old, FileInfo *nw) {

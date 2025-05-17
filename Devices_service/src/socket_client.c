@@ -21,11 +21,20 @@ void enviar_mensaje(const char *mensaje) {
     strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
 
     if (connect(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr_un)) == -1) {
-        // perror("connect");  // solo si estás depurando
+        perror("connect");
         close(sockfd);
         return;
     }
 
-    send(sockfd, mensaje, strlen(mensaje), 0);
+    printf(">> ENVIANDO: %s", mensaje);
+
+    ssize_t bytes = send(sockfd, mensaje, strlen(mensaje), 0);
+    if (bytes < 0) {
+        perror("send");
+    } else {
+        printf(">> %zd bytes enviados correctamente\n", bytes);
+        //test_leer_socket_directamente();
+    }
+
     close(sockfd);
 }
