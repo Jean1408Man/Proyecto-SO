@@ -8,19 +8,15 @@
 #include <errno.h>
 #include <fcntl.h>
 
-#define SOCKET_PATH "/tmp/devices.sock"
+typedef struct {
+    const char *socket_path;
+    const char *label;
+    const char *exec_path;
+    GtkTextBuffer *buffer;
+} ServicioUI;
 
-static GtkTextBuffer *global_buffer;
-
-static void append_to_buffer(GtkTextBuffer *buffer, const char *text) {
-    if (!buffer || !text) return;
-    GtkTextIter end;
-    gtk_text_buffer_get_end_iter(buffer, &end);
-    gtk_text_buffer_insert(buffer, &end, text, -1);
-    printf("📥 Se agregó al buffer GTK: %s\n", text);
-}
-
-static gboolean accept_connection(GIOChannel *source, GIOCondition condition, gpointer data) {
+static gboolean aceptar_conexion(GIOChannel *source, GIOCondition condition, gpointer data) {
+    ServicioUI *svc = (ServicioUI *)data;
     (void)condition;
     int server_fd = g_io_channel_unix_get_fd(source);
     struct sockaddr_un client_addr;
@@ -39,7 +35,9 @@ static gboolean accept_connection(GIOChannel *source, GIOCondition condition, gp
     if (bytes > 0) {
         buf[bytes] = '\0';
         printf("🟢 Recibido: %s\n", buf);
-        append_to_buffer(global_buffer, buf);
+        GtkTextIter end;
+        gtk_text_buffer_get_end_iter(svc->buffer, &end);
+        gtk_text_buffer_insert(svc->buffer, &end, buf, -1);
     } else {
         perror("❌ read");
     }
@@ -48,21 +46,19 @@ static gboolean accept_connection(GIOChannel *source, GIOCondition condition, gp
     return TRUE;
 }
 
-static void iniciar_socket_servidor(GtkTextBuffer *buffer) {
-    global_buffer = buffer;
-
+static void iniciar_socket_servidor(ServicioUI *svc) {
     int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (server_fd < 0) {
         perror("❌ Error creando socket");
         return;
     }
 
-    unlink(SOCKET_PATH);
+    unlink(svc->socket_path);
 
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
+    strncpy(addr.sun_path, svc->socket_path, sizeof(addr.sun_path) - 1);
 
     if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         perror("❌ Error en bind()");
@@ -76,34 +72,34 @@ static void iniciar_socket_servidor(GtkTextBuffer *buffer) {
         return;
     }
 
-    printf("🧠 Servidor escuchando en %s\n", SOCKET_PATH);
+    printf("🧠 Servidor escuchando en %s\n", svc->socket_path);
 
     GIOChannel *channel = g_io_channel_unix_new(server_fd);
-    g_io_add_watch(channel, G_IO_IN, accept_connection, NULL);
+    g_io_add_watch(channel, G_IO_IN, aceptar_conexion, svc);
 }
 
-static void lanzar_devices_service() {
+static void lanzar_servicio(const char *exec_path) {
     GError *error = NULL;
-
-    // Verifica si ya está corriendo
-    if (system("pgrep -x devices_service > /dev/null") == 0) {
-        printf("⚠️  devices_service ya está en ejecución.\n");
+    char comando[256];
+    snprintf(comando, sizeof(comando), "pgrep -f '%s' > /dev/null", exec_path);
+    if (system(comando) == 0) {
+        printf("⚠️  %s ya está en ejecución.\n", exec_path);
         return;
     }
 
-    gchar *argv[] = {"./Devices_service/devices_service", NULL};
+    gchar *argv[] = {(gchar *)exec_path, NULL};
     if (!g_spawn_async(NULL, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &error)) {
-        fprintf(stderr, "❌ Error al lanzar devices_service: %s\n", error->message);
+        fprintf(stderr, "❌ Error al lanzar %s: %s\n", exec_path, error->message);
         g_error_free(error);
     } else {
-        printf("🚀 devices_service lanzado automáticamente\n");
+        printf("🚀 %s lanzado automáticamente\n", exec_path);
     }
 }
 
-static GtkWidget* crear_interfaz(GtkTextBuffer **buffer_ref) {
+static GtkWidget* crear_interfaz(GtkTextBuffer **buffer_ref, const char *titulo) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
 
-    GtkWidget *label = gtk_label_new("Escaneo de Dispositivos USB:");
+    GtkWidget *label = gtk_label_new(titulo);
     gtk_box_pack_start(GTK_BOX(box), label, FALSE, FALSE, 2);
 
     GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
@@ -121,17 +117,23 @@ static GtkWidget* crear_interfaz(GtkTextBuffer **buffer_ref) {
 int main(int argc, char *argv[]) {
     gtk_init(&argc, &argv);
 
+    ServicioUI servicio = {
+        .socket_path = "/tmp/devices.sock",
+        .label = "Escaneo de Dispositivos USB:",
+        .exec_path = "./Devices_service/devices_service",
+        .buffer = NULL
+    };
+
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(window), "MatCom Guard 🛡️");
     gtk_window_set_default_size(GTK_WINDOW(window), 900, 600);
     g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
-    GtkTextBuffer *buffer;
-    GtkWidget *contenido = crear_interfaz(&buffer);
+    GtkWidget *contenido = crear_interfaz(&servicio.buffer, servicio.label);
     gtk_container_add(GTK_CONTAINER(window), contenido);
 
-    iniciar_socket_servidor(buffer);
-    lanzar_devices_service();
+    iniciar_socket_servidor(&servicio);
+    lanzar_servicio(servicio.exec_path);
 
     gtk_widget_show_all(window);
     gtk_main();
