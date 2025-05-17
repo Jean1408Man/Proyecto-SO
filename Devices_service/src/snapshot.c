@@ -17,6 +17,14 @@ pthread_mutex_t contador_mutex = PTHREAD_MUTEX_INITIALIZER;
 int hilos_activos = 0;
 pthread_mutex_t tabla_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+static int es_ruta_ignorada(const char *rel_path) {
+    return strstr(rel_path, "/.Trash") ||
+           strstr(rel_path, "/lost+found") ||
+           strstr(rel_path, "/.DS_Store") ||
+           strstr(rel_path, "/.cache") ||
+           strstr(rel_path, "/.Trash-1000");
+}
+
 static int calc_sha(const char *p, uint8_t h[32]) {
     FILE *f = fopen(p, "rb"); if (!f) return -1;
     SHA256_CTX c; SHA256_Init(&c);
@@ -26,6 +34,8 @@ static int calc_sha(const char *p, uint8_t h[32]) {
 }
 
 void procesar_archivo(const char *rel_path, const struct stat *st) {
+    if (es_ruta_ignorada(rel_path)) return;
+
     uint8_t h[32]; if (calc_sha(rel_path, h)) return;
 
     const char *rel = rel_path + strlen(base_root) + 1;
@@ -56,6 +66,8 @@ void escanear_directorio(const char *path) {
         if (stat(full_path, &st) != 0) continue;
 
         if (S_ISDIR(st.st_mode)) {
+            if (es_ruta_ignorada(full_path)) continue;
+
             pthread_mutex_lock(&contador_mutex);
             if (hilos_activos < MAX_THREADS) {
                 hilos_activos++;
@@ -92,13 +104,12 @@ FileInfo *build_snapshot(const char *root) {
     base_root = root;
     escanear_directorio(root);
 
-    // Esperar que terminen los hilos
     while (1) {
         pthread_mutex_lock(&contador_mutex);
         int activos = hilos_activos;
         pthread_mutex_unlock(&contador_mutex);
         if (activos == 0) break;
-        usleep(100000); // 100 ms
+        usleep(100000);
     }
     return tabla;
 }
