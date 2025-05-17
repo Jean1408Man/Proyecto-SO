@@ -1,5 +1,6 @@
 #define _XOPEN_SOURCE 700
 #include "snapshot.h"
+#include "socket_client.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -116,18 +117,26 @@ FileInfo *build_snapshot(const char *root) {
 
 void diff_snapshots(FileInfo *old, FileInfo *nw) {
     FileInfo *cur, *tmp;
+    char mensaje[256];
+
     HASH_ITER(hh, nw, cur, tmp) {
         FileInfo *prev; HASH_FIND_STR(old, cur->rel_path, prev);
-        if (!prev)
-            printf("[+] %s\n", cur->rel_path);
-        else if (memcmp(prev->sha256, cur->sha256, 32))
-            printf("[*] %s\n", cur->rel_path);
+        if (!prev) {
+            snprintf(mensaje, sizeof(mensaje), "[+] %s\n", cur->rel_path);
+            enviar_mensaje(mensaje);
+        } else if (memcmp(prev->sha256, cur->sha256, 32)) {
+            snprintf(mensaje, sizeof(mensaje), "[*] %s\n", cur->rel_path);
+            enviar_mensaje(mensaje);
+        }
     }
+
     HASH_ITER(hh, old, cur, tmp) {
         FileInfo *probe;
         HASH_FIND_STR(nw, cur->rel_path, probe);
-        if (!probe)
-            printf("[-] %s\n", cur->rel_path);
+        if (!probe) {
+            snprintf(mensaje, sizeof(mensaje), "[-] %s\n", cur->rel_path);
+            enviar_mensaje(mensaje);
+        }
     }
 }
 

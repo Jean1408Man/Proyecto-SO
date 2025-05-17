@@ -2,6 +2,7 @@
 #include "mount_state.h"
 #include "mount_scanner.h"
 #include "snapshot.h"
+#include "socket_client.h"  // <--- AÑADIDO
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -11,9 +12,12 @@ static MountState *tabla = NULL;
 
 static void refresh_mounts(void)
 {
-    MountState *ms, *tmp; HASH_ITER(hh, tabla, ms, tmp) ms->seen = 0;
+    MountState *ms, *tmp;
+    HASH_ITER(hh, tabla, ms, tmp) ms->seen = 0;
 
-    MountInfo list[32]; size_t n = obtener_montajes_usb(list, 32);
+    MountInfo list[32];
+    size_t n = obtener_montajes_usb(list, 32);
+
     for (size_t i = 0; i < n; ++i) {
         HASH_FIND_STR(tabla, list[i].mountpoint, ms);
         if (!ms) {
@@ -22,14 +26,25 @@ static void refresh_mounts(void)
             strcpy(ms->device, list[i].device);
             strcpy(ms->fstype, list[i].fstype);
             HASH_ADD_STR(tabla, mountpoint, ms);
-            printf(">> MONTADO %s (%s)\n", ms->mountpoint, ms->device);
+
+            // Enviar mensaje por socket
+            char msg[256];
+            snprintf(msg, sizeof(msg), ">> MONTADO %s (%s)\n", ms->mountpoint, ms->device);
+            enviar_mensaje(msg);
         }
         ms->seen = 1;
     }
-    HASH_ITER(hh, tabla, ms, tmp) if (!ms->seen) {
-        printf("<< DESMONTADO %s\n", ms->mountpoint);
-        free_snapshot(ms->snapshot);
-        HASH_DEL(tabla, ms); free(ms);
+
+    HASH_ITER(hh, tabla, ms, tmp) {
+        if (!ms->seen) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "<< DESMONTADO %s\n", ms->mountpoint);
+            enviar_mensaje(msg);
+
+            free_snapshot(ms->snapshot);
+            HASH_DEL(tabla, ms);
+            free(ms);
+        }
     }
 }
 

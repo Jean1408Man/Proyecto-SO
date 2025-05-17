@@ -2,11 +2,15 @@
 #include <glib.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
 
-typedef struct {
-    GtkTextBuffer *buffer;
-    const char *command;
-} TaskContext;
+#define SOCKET_PATH "/tmp/devices.sock"
+
+static GtkTextBuffer *global_buffer;
 
 static void append_to_buffer(GtkTextBuffer *buffer, const char *text) {
     GtkTextIter end;
@@ -14,44 +18,61 @@ static void append_to_buffer(GtkTextBuffer *buffer, const char *text) {
     gtk_text_buffer_insert(buffer, &end, text, -1);
 }
 
-static gboolean read_output(GIOChannel *source, GIOCondition condition, gpointer data) {
-    TaskContext *ctx = (TaskContext *)data;
-    gchar *string;
-    gsize size;
-    GIOStatus status = g_io_channel_read_line(source, &string, &size, NULL, NULL);
+static gboolean handle_client(GIOChannel *source, GIOCondition condition, gpointer data) {
+    (void)data;
+    if (condition & G_IO_HUP || condition & G_IO_ERR) return FALSE;
+
+    gchar buf[512];
+    gsize len = 0;
+    GIOStatus status = g_io_channel_read_line(source, &buf[0], sizeof(buf), &len, NULL);
 
     if (status == G_IO_STATUS_NORMAL) {
-        append_to_buffer(ctx->buffer, string);
-        g_free(string);
-        return TRUE;
+        append_to_buffer(global_buffer, buf);
     }
-
-    g_free(string);
-    return FALSE;
+    return TRUE;
 }
 
-static void launch_task(GtkTextBuffer *buffer, const char *cmd) {
-    TaskContext *ctx = g_new(TaskContext, 1);
-    ctx->buffer = buffer;
-    ctx->command = cmd;
+static gboolean accept_connection(GIOChannel *source, GIOCondition condition, gpointer data) {
+    int server_fd = g_io_channel_unix_get_fd(source);
+    struct sockaddr_un client_addr;
+    socklen_t client_len = sizeof(client_addr);
+    int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
 
-    GError *error = NULL;
-    gchar **argv = g_strsplit(cmd, " ", -1);
-    gint stdout_fd;
-    GSpawnFlags flags = G_SPAWN_DO_NOT_REAP_CHILD;
-    GPid child_pid;
+    if (client_fd >= 0) {
+        GIOChannel *client_channel = g_io_channel_unix_new(client_fd);
+        g_io_add_watch(client_channel, G_IO_IN | G_IO_HUP | G_IO_ERR, handle_client, data);
+    }
+    return TRUE;
+}
 
-    if (!g_spawn_async_with_pipes(NULL, argv, NULL, flags, NULL, NULL, &child_pid, NULL, &stdout_fd, NULL, &error)) {
-        append_to_buffer(buffer, error->message);
-        g_error_free(error);
-        g_strfreev(argv);
+static void iniciar_socket_servidor(GtkTextBuffer *buffer) {
+    int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (server_fd < 0) {
+        perror("socket");
         return;
     }
 
-    GIOChannel *channel = g_io_channel_unix_new(stdout_fd);
-    g_io_add_watch(channel, G_IO_IN | G_IO_HUP, read_output, ctx);
-    g_io_channel_unref(channel);
-    g_strfreev(argv);
+    unlink(SOCKET_PATH);
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, SOCKET_PATH, sizeof(addr.sun_path) - 1);
+
+    if (bind(server_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        close(server_fd);
+        return;
+    }
+
+    if (listen(server_fd, 5) < 0) {
+        perror("listen");
+        close(server_fd);
+        return;
+    }
+
+    GIOChannel *channel = g_io_channel_unix_new(server_fd);
+    g_io_add_watch(channel, G_IO_IN, accept_connection, NULL);
 }
 
 int main(int argc, char *argv[]) {
@@ -75,10 +96,9 @@ int main(int argc, char *argv[]) {
     GtkWidget *text_view = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
     gtk_container_add(GTK_CONTAINER(scrolled), text_view);
-    GtkTextBuffer *buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
+    global_buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
 
-    // Comando real del servicio USB
-    launch_task(buffer, "./Devices_service/devices_service");
+    iniciar_socket_servidor(global_buffer);
 
     gtk_widget_show_all(window);
     gtk_main();
