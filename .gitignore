@@ -1,5 +1,7 @@
 # Prerequisites
 *.d
+# ─── artefactos de compilación ───────────────────────────────
+Devices_service/devices_service
 
 # Object files
 *.o
@@ -50,3 +52,4 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
