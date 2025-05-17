@@ -97,43 +97,41 @@ static void lanzar_servicio(const char *exec_path) {
 }
 
 static GtkWidget* crear_interfaz(GtkTextBuffer **buffer_ref, const char *titulo) {
-    GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-
-    GtkWidget *label = gtk_label_new(titulo);
-    gtk_box_pack_start(GTK_BOX(box), label, FALSE, FALSE, 2);
-
+    GtkWidget *frame = gtk_frame_new(titulo);
     GtkWidget *scrolled = gtk_scrolled_window_new(NULL, NULL);
     gtk_widget_set_vexpand(scrolled, TRUE);
-    gtk_box_pack_start(GTK_BOX(box), scrolled, TRUE, TRUE, 2);
+    gtk_container_add(GTK_CONTAINER(frame), scrolled);
 
     GtkWidget *text_view = gtk_text_view_new();
     gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
     gtk_container_add(GTK_CONTAINER(scrolled), text_view);
     *buffer_ref = gtk_text_view_get_buffer(GTK_TEXT_VIEW(text_view));
 
-    return box;
+    return frame;
 }
 
 int main(int argc, char *argv[]) {
     gtk_init(&argc, &argv);
 
-    ServicioUI servicio = {
-        .socket_path = "/tmp/devices.sock",
-        .label = "Escaneo de Dispositivos USB:",
-        .exec_path = "./Devices_service/devices_service",
-        .buffer = NULL
+    ServicioUI servicios[] = {
+        {"/tmp/devices.sock", "Dispositivos USB:", "./Devices_service/devices_service", NULL},
     };
+    int total = sizeof(servicios) / sizeof(servicios[0]);
 
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(window), "MatCom Guard 🛡️");
     gtk_window_set_default_size(GTK_WINDOW(window), 900, 600);
     g_signal_connect(window, "destroy", G_CALLBACK(gtk_main_quit), NULL);
 
-    GtkWidget *contenido = crear_interfaz(&servicio.buffer, servicio.label);
-    gtk_container_add(GTK_CONTAINER(window), contenido);
+    GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_container_add(GTK_CONTAINER(window), vbox);
 
-    iniciar_socket_servidor(&servicio);
-    lanzar_servicio(servicio.exec_path);
+    for (int i = 0; i < total; ++i) {
+        GtkWidget *seccion = crear_interfaz(&servicios[i].buffer, servicios[i].label);
+        gtk_box_pack_start(GTK_BOX(vbox), seccion, TRUE, TRUE, 5);
+        iniciar_socket_servidor(&servicios[i]);
+        lanzar_servicio(servicios[i].exec_path);
+    }
 
     gtk_widget_show_all(window);
     gtk_main();
