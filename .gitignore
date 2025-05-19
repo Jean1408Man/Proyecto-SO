@@ -2,7 +2,7 @@
 *.d
 # ─── artefactos de compilación ───────────────────────────────
 Devices_service/devices_service
-
+Ports_service/escaner
 # Object files
 *.o
 *.ko
