@@ -1,3 +1,5 @@
+#define _DEFAULT_SOURCE
+
 #include "port_scanner.h"
 #include "port_utils.h"
 
@@ -11,6 +13,8 @@
 #include <dirent.h>
 #include <string.h>
 #include <pwd.h>
+#include <sys/types.h>
+#include <dirent.h>
 
 typedef struct {
     int puerto_actual;
@@ -63,7 +67,7 @@ unsigned long buscar_inode_por_puerto(int puerto) {
 
     char local[64];
     unsigned long inode;
-    while (fgets(linea, sizeof(linea), archivo)) {
+    while ((void)fgets(linea, sizeof(linea), archivo)) {
         int local_port;
         sscanf(linea, "%*d: %64[0-9A-Fa-f]:%x %*s %*s %*s %*s %*s %*s %*s %*s %lu",
                local, &local_port, &inode);
