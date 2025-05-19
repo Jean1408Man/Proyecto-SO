@@ -1,45 +1,45 @@
-###############################################################################
-#  Makefile – Proyecto “Ports_service”
-#
-#  Compila todos los .c que haya en src/ y deja el ejecutable en la raíz
-#  Usa glib-2.0 (hash table) y pthread (hilos).
-#
-#  Objetivos principales:
-#     make          → compila en modo optimizado (-O2)
-#     make debug    → compila con símbolos de depuración (-g)
-#     make clean    → borra objetos y ejecutables
-###############################################################################
+# make         # Compila todo
+# ./bin/escaner  # Ejecuta el binario
+# make clean   # Limpia los archivos generados
 
-# ──────── Configuración ──────────────────────────────────────────────────────
-CC       ?= gcc
-CFLAGS   ?= -std=c11 -Wall -Wextra -O2
-CPPFLAGS ?= -Iinclude `pkg-config --cflags glib-2.0`
-LDFLAGS  ?= `pkg-config --libs glib-2.0` -lpthread
-TARGET    = escaner
 
-# ──────── Archivos fuente y objetos ──────────────────────────────────────────
-SRC := $(wildcard src/*.c)
-OBJ := $(patsubst src/%.c, build/%.o, $(SRC))
+# === CONFIGURACIÓN ===
+CC = gcc
+CFLAGS = -Wall -Wextra -Iinclude `pkg-config --cflags glib-2.0`
+LDFLAGS = `pkg-config --libs glib-2.0` -lpthread
 
-# Crea la carpeta build/ si no existe (silenciosamente)
-$(shell mkdir -p build)
+# === ARCHIVOS ===
+SRCDIR = src
+OBJDIR = build
+BINDIR = bin
 
-# ──────── Reglas principales ─────────────────────────────────────────────────
+SOURCES = $(wildcard $(SRCDIR)/*.c)
+OBJECTS = $(patsubst $(SRCDIR)/%.c, $(OBJDIR)/%.o, $(SOURCES))
+TARGET = $(BINDIR)/escaner
+
+# === REGLAS ===
 all: $(TARGET)
 
-build/%.o: src/%.c include/*.h
-	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+# Crea bin y build si no existen
+$(TARGET): | $(BINDIR) $(OBJDIR)
+$(TARGET): $(OBJECTS)
+	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
+	@echo "✅ Compilación completada. Ejecuta: ./$(TARGET)"
 
-$(TARGET): $(OBJ)
-	$(CC) $(OBJ) $(LDFLAGS) -o $@
-	@echo "✓ Binario generado: ./$@"
+# Compilación de objetos
+$(OBJDIR)/%.o: $(SRCDIR)/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
 
-# ──────── Modos adicionales ──────────────────────────────────────────────────
-debug: CFLAGS = -std=c11 -Wall -Wextra -g -O0
-debug: clean all
+# Carpetas
+$(BINDIR):
+	mkdir -p $(BINDIR)
 
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
+
+# Limpieza
 clean:
 	@echo "🧹 Limpiando..."
 	@rm -rf build/*.o $(TARGET)
 
-.PHONY: all debug clean
+.PHONY: all clean
