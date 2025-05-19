@@ -19,24 +19,39 @@ typedef struct {
     GHashTable *tabla;
 } ContextoEscaneo;
 
-// Intenta conectar TCP a localhost:puerto, timeout 100 ms
 static int puerto_abierto(int puerto) {
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) return 0;
-
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_port   = htons(puerto),
-        .sin_addr.s_addr = inet_addr("127.0.0.1")
+    const char* loopbacks[] = {
+        "127.0.0.1",
+        "127.1.1.1",
+        "127.1.2.7"
     };
-    struct timeval tv = { 0, 100000 }; // 100 ms
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    const int total_loopbacks = sizeof(loopbacks) / sizeof(loopbacks[0]);
 
-    int ok = (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) == 0);
-    close(sockfd);
-    return ok;
+    for (int i = 0; i < total_loopbacks; ++i) {
+        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (sockfd < 0) continue;
+
+        struct sockaddr_in addr = {
+            .sin_family = AF_INET,
+            .sin_port = htons(puerto),
+            .sin_addr.s_addr = inet_addr(loopbacks[i])
+        };
+
+        struct timeval tv = { 0, 100000 }; // 100 ms
+        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+        if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
+            close(sockfd);
+            return 1;
+        }
+
+        close(sockfd);
+    }
+
+    return 0;
 }
+
 
 // Busca el inode de un puerto en /proc/net/tcp
 unsigned long buscar_inode_por_puerto(int puerto) {
