@@ -1,48 +1,45 @@
-# === CONFIGURACIÓN ===
-CC = gcc
-CFLAGS = -Wall -Wextra -Iinclude `pkg-config --cflags glib-2.0`
-LDFLAGS = `pkg-config --libs glib-2.0` -lpthread
+###############################################################################
+#  Makefile – Proyecto “Ports_service”
+#
+#  Compila todos los .c que haya en src/ y deja el ejecutable en la raíz
+#  Usa glib-2.0 (hash table) y pthread (hilos).
+#
+#  Objetivos principales:
+#     make          → compila en modo optimizado (-O2)
+#     make debug    → compila con símbolos de depuración (-g)
+#     make clean    → borra objetos y ejecutables
+###############################################################################
 
-# === ESTRUCTURA DE CARPETAS ===
-SRCDIR = src
-OBJDIR = build
-BINDIR = bin
+# ──────── Configuración ──────────────────────────────────────────────────────
+CC       ?= gcc
+CFLAGS   ?= -std=c11 -Wall -Wextra -O2
+CPPFLAGS ?= -Iinclude `pkg-config --cflags glib-2.0`
+LDFLAGS  ?= `pkg-config --libs glib-2.0` -lpthread
+TARGET    = escaner
 
-# === ARCHIVOS ===
-SOURCES = $(wildcard $(SRCDIR)/*.c)
-OBJECTS = $(patsubst $(SRCDIR)/%.c, $(OBJDIR)/%.o, $(SOURCES))
-TARGET = $(BINDIR)/escaner
+# ──────── Archivos fuente y objetos ──────────────────────────────────────────
+SRC := $(wildcard src/*.c)
+OBJ := $(patsubst src/%.c, build/%.o, $(SRC))
 
-# === REGLAS ===
+# Crea la carpeta build/ si no existe (silenciosamente)
+$(shell mkdir -p build)
 
-# Regla por defecto
+# ──────── Reglas principales ─────────────────────────────────────────────────
 all: $(TARGET)
 
-# Requiere carpetas antes de compilar ejecutable
-$(TARGET): | $(OBJDIR) $(BINDIR)
-$(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
-	@echo "✅ Compilación completada. Ejecuta: ./$(TARGET)"
+build/%.o: src/%.c include/*.h
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-# Compilar archivos .c a .o en build/
-$(OBJDIR)/%.o: $(SRCDIR)/%.c
-	$(CC) $(CFLAGS) -c $< -o $@
+$(TARGET): $(OBJ)
+	$(CC) $(OBJ) $(LDFLAGS) -o $@
+	@echo "✓ Binario generado: ./$@"
 
-# Crear carpetas si no existen
-$(OBJDIR):
-	mkdir -p $(OBJDIR)
+# ──────── Modos adicionales ──────────────────────────────────────────────────
+debug: CFLAGS = -std=c11 -Wall -Wextra -g -O0
+debug: clean all
 
-$(BINDIR):
-	mkdir -p $(BINDIR)
-
-# Ejecutar binario (build + run)
-run: all
-	@echo "🚀 Ejecutando escaner:"
-	./$(TARGET)
-
-# Limpiar archivos generados
 clean:
 	@echo "🧹 Limpiando..."
 	@rm -rf build/*.o $(TARGET)
 
-.PHONY: all clean run
+.PHONY: all debug clean
