@@ -1,48 +1,45 @@
+# make         # Compila todo
+# ./bin/escaner  # Ejecuta el binario
+# make clean   # Limpia los archivos generados
+
+
 # === CONFIGURACIÓN ===
 CC = gcc
 CFLAGS = -Wall -Wextra -Iinclude `pkg-config --cflags glib-2.0`
 LDFLAGS = `pkg-config --libs glib-2.0` -lpthread
 
-# === ESTRUCTURA DE CARPETAS ===
+# === ARCHIVOS ===
 SRCDIR = src
 OBJDIR = build
 BINDIR = bin
 
-# === ARCHIVOS ===
 SOURCES = $(wildcard $(SRCDIR)/*.c)
 OBJECTS = $(patsubst $(SRCDIR)/%.c, $(OBJDIR)/%.o, $(SOURCES))
 TARGET = $(BINDIR)/escaner
 
 # === REGLAS ===
-
-# Regla por defecto
 all: $(TARGET)
 
-# Requiere carpetas antes de compilar ejecutable
-$(TARGET): | $(OBJDIR) $(BINDIR)
+# Crea bin y build si no existen
+$(TARGET): | $(BINDIR) $(OBJDIR)
 $(TARGET): $(OBJECTS)
 	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
 	@echo "✅ Compilación completada. Ejecuta: ./$(TARGET)"
 
-# Compilar archivos .c a .o en build/
+# Compilación de objetos
 $(OBJDIR)/%.o: $(SRCDIR)/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Crear carpetas si no existen
-$(OBJDIR):
-	mkdir -p $(OBJDIR)
-
+# Carpetas
 $(BINDIR):
 	mkdir -p $(BINDIR)
 
-# Ejecutar binario (build + run)
-run: all
-	@echo "🚀 Ejecutando escaner:"
-	./$(TARGET)
+$(OBJDIR):
+	mkdir -p $(OBJDIR)
 
-# Limpiar archivos generados
+# Limpieza
 clean:
 	rm -rf $(OBJDIR) $(BINDIR)
 	@echo "🧹 Limpieza completada."
 
-.PHONY: all clean run
+.PHONY: all clean
