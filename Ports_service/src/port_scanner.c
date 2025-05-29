@@ -72,7 +72,7 @@ unsigned long buscar_inode_por_puerto(int puerto) {
 
     char local[64];
     unsigned long inode;
-    while ((void)fgets(linea, sizeof(linea), archivo)) {
+    while (fgets(linea, sizeof(linea), archivo)) {
         int local_port;
         sscanf(linea, "%*d: %64[0-9A-Fa-f]:%x %*s %*s %*s %*s %*s %*s %*s %*s %lu",
                local, &local_port, &inode);
@@ -154,7 +154,6 @@ static void* trabajador(void *arg) {
 
         if (puerto_abierto(puerto)) {
             const char *svc = buscar_servicio(ctx->tabla, puerto);
-
             if (svc) {
                 ResultadoVerificacion verif = verificar_servicio(svc, puerto);
                 if (verif.valido) {
