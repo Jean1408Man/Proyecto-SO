@@ -43,6 +43,10 @@ void procesar_archivo(const char *rel_path, const struct stat *st, FileInfo **ta
     fi->rel_path = strdup(rel);
     memcpy(fi->sha256, h, 32);
     fi->mtime = st->st_mtime;
+    fi->size = st->st_size;
+    fi->mode = st->st_mode;
+    fi->uid = st->st_uid;
+    fi->gid = st->st_gid;
 
     pthread_mutex_lock(&tabla_mutex);
     HASH_ADD_KEYPTR(hh, *tabla, fi->rel_path, strlen(fi->rel_path), fi);
@@ -127,16 +131,50 @@ FileInfo *build_snapshot(const char *root) {
 
 void diff_snapshots(FileInfo *old, FileInfo *nw) {
     FileInfo *cur, *tmp;
-    char mensaje[256];
+    char mensaje[512];
 
     HASH_ITER(hh, nw, cur, tmp) {
         FileInfo *prev; HASH_FIND_STR(old, cur->rel_path, prev);
         if (!prev) {
             snprintf(mensaje, sizeof(mensaje), "[+] %s\n", cur->rel_path);
             enviar_mensaje(mensaje);
-        } else if (memcmp(prev->sha256, cur->sha256, 32)) {
-            snprintf(mensaje, sizeof(mensaje), "[*] %s\n", cur->rel_path);
-            enviar_mensaje(mensaje);
+        } else {
+            if (memcmp(prev->sha256, cur->sha256, 32)) {
+                snprintf(mensaje, sizeof(mensaje), "[*] %s\n", cur->rel_path);
+                enviar_mensaje(mensaje);
+            }
+
+            if (cur->size > prev->size * 100 && cur->size > 100 * 1024 * 1024) {
+                snprintf(mensaje, sizeof(mensaje), "[!] CRECIMIENTO SOSPECHOSO: %s (%ld → %ld bytes)\n", cur->rel_path, prev->size, cur->size);
+                enviar_mensaje(mensaje);
+            }
+
+            if (cur->mode != prev->mode) {
+                snprintf(mensaje, sizeof(mensaje), "[!] CAMBIO DE PERMISOS: %s (modo %o → %o)\n", cur->rel_path, prev->mode, cur->mode);
+                enviar_mensaje(mensaje);
+            }
+
+            const char *ext_ant = strrchr(prev->rel_path, '.');
+            const char *ext_nue = strrchr(cur->rel_path, '.');
+            if (ext_ant && ext_nue && strcmp(ext_ant, ext_nue)) {
+                snprintf(mensaje, sizeof(mensaje), "[!] CAMBIO DE EXTENSIÓN: %s (de %s a %s)\n", cur->rel_path, ext_ant, ext_nue);
+                enviar_mensaje(mensaje);
+            }
+
+            if (cur->uid != prev->uid) {
+                snprintf(mensaje, sizeof(mensaje), "[!] CAMBIO DE DUEÑO (UID): %s (%d → %d)\n", cur->rel_path, prev->uid, cur->uid);
+                enviar_mensaje(mensaje);
+            }
+
+            if (cur->gid != prev->gid) {
+                snprintf(mensaje, sizeof(mensaje), "[!] CAMBIO DE GRUPO (GID): %s (%d → %d)\n", cur->rel_path, prev->gid, cur->gid);
+                enviar_mensaje(mensaje);
+            }
+
+            if (cur->mtime != prev->mtime) {
+                snprintf(mensaje, sizeof(mensaje), "[!] MODIFICACIÓN DE TIMESTAMP: %s\n", cur->rel_path);
+                enviar_mensaje(mensaje);
+            }
         }
     }
 
@@ -146,6 +184,16 @@ void diff_snapshots(FileInfo *old, FileInfo *nw) {
         if (!probe) {
             snprintf(mensaje, sizeof(mensaje), "[-] %s\n", cur->rel_path);
             enviar_mensaje(mensaje);
+        }
+    }
+
+    FileInfo *a, *b;
+    for (a = nw; a != NULL; a = a->hh.next) {
+        for (b = a->hh.next; b != NULL; b = b->hh.next) {
+            if (memcmp(a->sha256, b->sha256, 32) == 0 && strcmp(a->rel_path, b->rel_path) != 0) {
+                snprintf(mensaje, sizeof(mensaje), "[!] ARCHIVOS DUPLICADOS: %s y %s\n", a->rel_path, b->rel_path);
+                enviar_mensaje(mensaje);
+            }
         }
     }
 }
