@@ -175,7 +175,7 @@ static void* trabajador(void *arg) {
     return NULL;
 }
 
-static const int puertos_extra[] = {2121, 2222, 2525, 8080, 8000, 8443};
+static const int puertos_extra[] = {2121, 2222, 2525, 31337, 8080, 8000, 8443};
 static const int total_extra = sizeof(puertos_extra) / sizeof(puertos_extra[0]);
 
 void escanear_puertos(GHashTable *tabla, int inicio, int fin) {

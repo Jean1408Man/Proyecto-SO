@@ -43,3 +43,9 @@ clean:
 	@rm -rf build/*.o $(TARGET)
 
 .PHONY: all clean
+
+# Pruebas automatizadas
+test: all
+	@echo "🧪 Ejecutando pruebas..."
+	@chmod +x test_todo.sh
+	@./test_todo.sh
