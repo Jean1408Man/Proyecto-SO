@@ -60,6 +60,7 @@ void *scan_device_thread(void *arg) {
     MountState *ms = args->ms;
     int umbral = args->umbral;
 
+    printf("🕵️‍♂️ Iniciando escaneo de: %s\n", ms->mountpoint);
     pthread_mutex_lock(&ms->mutex);
     FileInfo *nuevo = build_snapshot(ms->mountpoint);
     if (ms->snapshot)
@@ -67,6 +68,7 @@ void *scan_device_thread(void *arg) {
     free_snapshot(ms->snapshot);
     ms->snapshot = nuevo;
     pthread_mutex_unlock(&ms->mutex);
+    printf("✅ Escaneo completado: %s\n", ms->mountpoint);
 
     ms->escaneando = 0;
     free(args);

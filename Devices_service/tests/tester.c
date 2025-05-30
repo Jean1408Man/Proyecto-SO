@@ -9,6 +9,9 @@
 #define BASE_PATH "/mnt"
 #define NUM_USB 5
 
+int UMBRAL = 10;     // por defecto
+int ESPERA = 10;     // por defecto
+
 void crear_dispositivo(const char *path) {
     mkdir(BASE_PATH, 0755); // Asegura que /mnt exista
     mkdir(path, 0755);
@@ -40,7 +43,7 @@ void poblar_contenido(const char *path, int index) {
         fclose(f);
     }
 
-    sync(); // asegura que los cambios se reflejen
+    sync();
 }
 
 void modificar_contenido(const char *path, int index) {
@@ -63,7 +66,7 @@ void modificar_contenido(const char *path, int index) {
 
     remove(eliminado);
 
-    sync(); // fuerza escritura en disco
+    sync();
 }
 
 void desmontar_dispositivo(const char *path) {
@@ -75,10 +78,27 @@ void desmontar_dispositivo(const char *path) {
     }
 }
 
-int main() {
+void procesar_argumentos(int argc, char *argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        if (strncmp(argv[i], "--umbral=", 9) == 0) {
+            UMBRAL = atoi(argv[i] + 9);
+        } else if (strncmp(argv[i], "--espera=", 9) == 0) {
+            ESPERA = atoi(argv[i] + 9);
+        } else {
+            fprintf(stderr, "⚠️  Argumento no reconocido: %s\n", argv[i]);
+        }
+    }
+}
+
+int main(int argc, char *argv[]) {
     char path[256];
 
+    procesar_argumentos(argc, argv);
+
+    printf("[*] Umbral de detección configurado: %d%%\n", UMBRAL);
+    printf("[*] Tiempo de espera entre fases: %d segundos\n", ESPERA);
     printf("[*] Simulando %d dispositivos USB...\n", NUM_USB);
+
     for (int i = 1; i <= NUM_USB; ++i) {
         snprintf(path, sizeof(path), "%s/usb%d", BASE_PATH, i);
         crear_dispositivo(path);
@@ -93,7 +113,7 @@ int main() {
     }
 
     printf("[*] Esperando detección inicial...\n");
-    sleep(10);
+    sleep(ESPERA);
 
     printf("[*] Modificando contenido para prueba de cambios...\n");
     for (int i = 1; i <= NUM_USB; ++i) {
@@ -102,7 +122,7 @@ int main() {
     }
 
     printf("[*] Esperando detección de cambios...\n");
-    sleep(10);
+    sleep(ESPERA);
 
     printf("[*] Desmontando dispositivos simulados...\n");
     for (int i = 1; i <= NUM_USB; ++i) {

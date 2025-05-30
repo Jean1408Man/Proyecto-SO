@@ -13,9 +13,13 @@
 static const char *base_root;
 
 #define MAX_THREADS 10
+#define MAX_ARCHIVOS 50000
+#define MAX_TAMANO_HASH (1 * 1024 * 1024) // 1MB
+
 pthread_mutex_t contador_mutex = PTHREAD_MUTEX_INITIALIZER;
 int hilos_activos = 0;
 pthread_mutex_t tabla_mutex = PTHREAD_MUTEX_INITIALIZER;
+static int contador_archivos = 0;
 
 static int es_ruta_ignorada(const char *rel_path) {
     return strstr(rel_path, "/.Trash") ||
@@ -36,7 +40,19 @@ static int calc_sha(const char *p, uint8_t h[32]) {
 void procesar_archivo(const char *rel_path, const struct stat *st, FileInfo **tabla) {
     if (es_ruta_ignorada(rel_path)) return;
 
-    uint8_t h[32]; if (calc_sha(rel_path, h)) return;
+    pthread_mutex_lock(&contador_mutex);
+    if (++contador_archivos > MAX_ARCHIVOS) {
+        pthread_mutex_unlock(&contador_mutex);
+        return;
+    }
+    pthread_mutex_unlock(&contador_mutex);
+
+    printf("📄 Archivo: %s (%ld bytes)\n", rel_path, st->st_size);
+
+    uint8_t h[32] = {0};
+    if (st->st_size <= MAX_TAMANO_HASH) {
+        calc_sha(rel_path, h);
+    }
 
     const char *rel = rel_path + strlen(base_root) + 1;
     FileInfo *fi = malloc(sizeof *fi);
@@ -63,6 +79,8 @@ typedef struct {
 void escanear_directorio(const char *path, FileInfo **tabla) {
     DIR *dir = opendir(path);
     if (!dir) return;
+
+    printf("📁 Explorando: %s\n", path);
 
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
@@ -113,8 +131,10 @@ void *escanear_directorio_thread(void *arg) {
 }
 
 FileInfo *build_snapshot(const char *root) {
+    printf("🧪 Entrando a build_snapshot: %s\n", root);
     FileInfo *tabla_local = NULL;
     base_root = root;
+    contador_archivos = 0;
 
     escanear_directorio(root, &tabla_local);
 
@@ -142,7 +162,8 @@ void diff_snapshots(FileInfo *old, FileInfo *nw, int umbral_porcentaje) {
             enviar_mensaje(mensaje);
             cambios_detectados++;
         } else {
-            if (memcmp(prev->sha256, cur->sha256, 32)) {
+            int tiene_hash = (cur->sha256[0] != 0 || prev->sha256[0] != 0);
+            if (tiene_hash && memcmp(prev->sha256, cur->sha256, 32)) {
                 snprintf(mensaje, sizeof(mensaje), "[*] %s\n", cur->rel_path);
                 enviar_mensaje(mensaje);
                 cambios_detectados++;
@@ -196,7 +217,9 @@ void diff_snapshots(FileInfo *old, FileInfo *nw, int umbral_porcentaje) {
     FileInfo *a, *b;
     for (a = nw; a != NULL; a = a->hh.next) {
         for (b = a->hh.next; b != NULL; b = b->hh.next) {
-            if (memcmp(a->sha256, b->sha256, 32) == 0 && strcmp(a->rel_path, b->rel_path) != 0) {
+            if (memcmp(a->sha256, b->sha256, 32) == 0 &&
+                strcmp(a->rel_path, b->rel_path) != 0 &&
+                (a->sha256[0] != 0 || b->sha256[0] != 0)) {
                 snprintf(mensaje, sizeof(mensaje), "[!] ARCHIVOS DUPLICADOS: %s y %s\n", a->rel_path, b->rel_path);
                 enviar_mensaje(mensaje);
             }

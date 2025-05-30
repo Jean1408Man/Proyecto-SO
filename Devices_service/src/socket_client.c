@@ -23,6 +23,7 @@ void enviar_mensaje(const char *mensaje) {
     if (connect(sockfd, (struct sockaddr *)&addr, sizeof(struct sockaddr_un)) == -1) {
         perror("connect");
         close(sockfd);
+        return;
     }
 
     printf(">> ENVIANDO: %s", mensaje);
