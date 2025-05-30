@@ -150,6 +150,7 @@ FileInfo *build_snapshot(const char *root) {
 }
 
 void diff_snapshots(FileInfo *old, FileInfo *nw, int umbral_porcentaje) {
+    printf("Analizando diferencias");
     FileInfo *cur, *tmp;
     char mensaje[512];
     int total_old = 0;
