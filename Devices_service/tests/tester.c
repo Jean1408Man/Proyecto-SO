@@ -4,16 +4,18 @@
 #include <sys/stat.h>
 #include <sys/mount.h>
 #include <unistd.h>
+#include <errno.h>
 
 #define BASE_PATH "/mnt"
 #define NUM_USB 5
 
 void crear_dispositivo(const char *path) {
+    mkdir(BASE_PATH, 0755); // Asegura que /mnt exista
     mkdir(path, 0755);
     if (mount("tmpfs", path, "tmpfs", 0, "size=10M") == 0) {
         printf("[+] Montado: %s\n", path);
     } else {
-        perror("Error al montar tmpfs");
+        fprintf(stderr, "✗ Error al montar %s: %s\n", path, strerror(errno));
         exit(EXIT_FAILURE);
     }
 }
@@ -25,11 +27,20 @@ void poblar_contenido(const char *path, int index) {
     snprintf(subarchivo, sizeof(subarchivo), "%s/otro%d.txt", subdir, index);
 
     mkdir(subdir, 0755);
+
     FILE *f = fopen(archivo, "w");
-    if (f) { fprintf(f, "archivo original %d\n", index); fclose(f); }
+    if (f) {
+        fprintf(f, "archivo original %d\n", index);
+        fclose(f);
+    }
 
     f = fopen(subarchivo, "w");
-    if (f) { fprintf(f, "subarchivo %d\n", index); fclose(f); }
+    if (f) {
+        fprintf(f, "subarchivo %d\n", index);
+        fclose(f);
+    }
+
+    sync(); // asegura que los cambios se reflejen
 }
 
 void modificar_contenido(const char *path, int index) {
@@ -39,12 +50,20 @@ void modificar_contenido(const char *path, int index) {
     snprintf(eliminado, sizeof(eliminado), "%s/sub/otro%d.txt", path, index);
 
     FILE *f = fopen(archivo, "w");
-    if (f) { fprintf(f, "contenido modificado\n"); fclose(f); }
+    if (f) {
+        fprintf(f, "contenido modificado significativamente para detección\n");
+        fclose(f);
+    }
 
     f = fopen(nuevo, "w");
-    if (f) { fprintf(f, "nuevo archivo\n"); fclose(f); }
+    if (f) {
+        fprintf(f, "nuevo archivo agregado\n");
+        fclose(f);
+    }
 
     remove(eliminado);
+
+    sync(); // fuerza escritura en disco
 }
 
 void desmontar_dispositivo(const char *path) {
@@ -52,7 +71,7 @@ void desmontar_dispositivo(const char *path) {
         printf("[-] Desmontado: %s\n", path);
         rmdir(path);
     } else {
-        perror("Error al desmontar dispositivo");
+        fprintf(stderr, "✗ Error al desmontar %s: %s\n", path, strerror(errno));
     }
 }
 
@@ -67,6 +86,7 @@ int main() {
 
     sleep(2);
 
+    printf("[*] Poblando contenido inicial...\n");
     for (int i = 1; i <= NUM_USB; ++i) {
         snprintf(path, sizeof(path), "%s/usb%d", BASE_PATH, i);
         poblar_contenido(path, i);
@@ -75,6 +95,7 @@ int main() {
     printf("[*] Esperando detección inicial...\n");
     sleep(10);
 
+    printf("[*] Modificando contenido para prueba de cambios...\n");
     for (int i = 1; i <= NUM_USB; ++i) {
         snprintf(path, sizeof(path), "%s/usb%d", BASE_PATH, i);
         modificar_contenido(path, i);
@@ -83,6 +104,7 @@ int main() {
     printf("[*] Esperando detección de cambios...\n");
     sleep(10);
 
+    printf("[*] Desmontando dispositivos simulados...\n");
     for (int i = 1; i <= NUM_USB; ++i) {
         snprintf(path, sizeof(path), "%s/usb%d", BASE_PATH, i);
         desmontar_dispositivo(path);

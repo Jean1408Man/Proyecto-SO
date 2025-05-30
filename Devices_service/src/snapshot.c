@@ -129,19 +129,23 @@ FileInfo *build_snapshot(const char *root) {
     return tabla_local;
 }
 
-void diff_snapshots(FileInfo *old, FileInfo *nw) {
+void diff_snapshots(FileInfo *old, FileInfo *nw, int umbral_porcentaje) {
     FileInfo *cur, *tmp;
     char mensaje[512];
+    int total_old = 0;
+    int cambios_detectados = 0;
 
     HASH_ITER(hh, nw, cur, tmp) {
         FileInfo *prev; HASH_FIND_STR(old, cur->rel_path, prev);
         if (!prev) {
             snprintf(mensaje, sizeof(mensaje), "[+] %s\n", cur->rel_path);
             enviar_mensaje(mensaje);
+            cambios_detectados++;
         } else {
             if (memcmp(prev->sha256, cur->sha256, 32)) {
                 snprintf(mensaje, sizeof(mensaje), "[*] %s\n", cur->rel_path);
                 enviar_mensaje(mensaje);
+                cambios_detectados++;
             }
 
             if (cur->size > prev->size * 100 && cur->size > 100 * 1024 * 1024) {
@@ -179,11 +183,13 @@ void diff_snapshots(FileInfo *old, FileInfo *nw) {
     }
 
     HASH_ITER(hh, old, cur, tmp) {
+        total_old++;
         FileInfo *probe;
         HASH_FIND_STR(nw, cur->rel_path, probe);
         if (!probe) {
             snprintf(mensaje, sizeof(mensaje), "[-] %s\n", cur->rel_path);
             enviar_mensaje(mensaje);
+            cambios_detectados++;
         }
     }
 
@@ -194,6 +200,14 @@ void diff_snapshots(FileInfo *old, FileInfo *nw) {
                 snprintf(mensaje, sizeof(mensaje), "[!] ARCHIVOS DUPLICADOS: %s y %s\n", a->rel_path, b->rel_path);
                 enviar_mensaje(mensaje);
             }
+        }
+    }
+
+    if (total_old > 0) {
+        int porcentaje = (cambios_detectados * 100) / total_old;
+        if (porcentaje >= umbral_porcentaje) {
+            snprintf(mensaje, sizeof(mensaje), "[!!] ALERTA: %d%% de los archivos han cambiado (umbral: %d%%)\n", porcentaje, umbral_porcentaje);
+            enviar_mensaje(mensaje);
         }
     }
 }

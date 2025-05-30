@@ -52,15 +52,18 @@ static void refresh_mounts(void)
 
 typedef struct {
     MountState *ms;
+    int umbral;
 } ScanArgs;
 
 void *scan_device_thread(void *arg) {
     ScanArgs *args = (ScanArgs *)arg;
     MountState *ms = args->ms;
+    int umbral = args->umbral;
 
     pthread_mutex_lock(&ms->mutex);
     FileInfo *nuevo = build_snapshot(ms->mountpoint);
-    if (ms->snapshot) diff_snapshots(ms->snapshot, nuevo);
+    if (ms->snapshot)
+        diff_snapshots(ms->snapshot, nuevo, umbral);
     free_snapshot(ms->snapshot);
     ms->snapshot = nuevo;
     pthread_mutex_unlock(&ms->mutex);
@@ -70,7 +73,8 @@ void *scan_device_thread(void *arg) {
     return NULL;
 }
 
-void run_monitor(unsigned intervalo)
+
+void run_monitor(unsigned intervalo, int umbral)
 {
     while (1) {
         refresh_mounts();
@@ -83,6 +87,8 @@ void run_monitor(unsigned intervalo)
             pthread_t hilo;
             ScanArgs *args = malloc(sizeof *args);
             args->ms = ms;
+            args->umbral = umbral;
+
             printf("🔍 Revisión: %s\n", ms->mountpoint);
             pthread_create(&hilo, NULL, scan_device_thread, args);
             pthread_detach(hilo);
@@ -91,3 +97,4 @@ void run_monitor(unsigned intervalo)
         sleep(intervalo);
     }
 }
+
