@@ -77,6 +77,12 @@ static void lanzar_servicio(const char *exec_rel_path) {
     char full_exec[PATH_MAX];
     snprintf(full_exec, sizeof(full_exec), "%s/%s", dir, exec_rel_path);
 
+    // 🔴 Agregado: matar procesos anteriores antes de lanzar uno nuevo
+    char comando[PATH_MAX + 50];
+    snprintf(comando, sizeof(comando), "pkill -f '%s' > /dev/null 2>&1", full_exec);
+    system(comando);
+
+    // 🟢 Continúa con la ejecución normal
     char base_dir[PATH_MAX];
     strcpy(base_dir, full_exec);
     char *last_slash = strrchr(base_dir, '/');
@@ -89,6 +95,7 @@ static void lanzar_servicio(const char *exec_rel_path) {
         g_error_free(error);
     }
 }
+
 
 int main(int argc, char *argv[]) {
     gtk_init(&argc, &argv);
