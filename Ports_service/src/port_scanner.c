@@ -51,7 +51,7 @@ static int puerto_abierto(int puerto) {
             .sin_addr.s_addr = inet_addr(loopbacks[i])
         };
 
-        struct timeval tv = { 0, 100000 }; // 100 ms
+        struct timeval tv = { 0, 500000 }; // 500 ms timeout
         setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
@@ -204,10 +204,9 @@ void escanear_puertos(GHashTable *tabla, int inicio, int fin) {
 
     pthread_mutex_destroy(&ctx.lock);
 
-    if (fin <= 2120) {
-        for (int i = 0; i < total_extra; ++i) {
-            escanear_puertos(tabla, puertos_extra[i], puertos_extra[i]);
-        }
+    // Siempre escanear puertos extra al final
+    for (int i = 0; i < total_extra; ++i) {
+        escanear_puertos(tabla, puertos_extra[i], puertos_extra[i]);
     }
 }
 
@@ -222,7 +221,7 @@ ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
         .sin_addr.s_addr = inet_addr("127.0.0.1")
     };
 
-    struct timeval tv = { 0, 200000 };
+    struct timeval tv = { 0, 500000 };
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
@@ -237,7 +236,7 @@ ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
         const char *req = "HEAD / HTTP/1.0\r\n\r\n";
         send(sockfd, req, strlen(req), 0);
         recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        resultado.valido = strstr(buffer, "HTTP") != NULL;
+        resultado.valido = strncmp(buffer, "HTTP/", 5) == 0;
     } else if (strcmp(servicio, "SSH") == 0) {
         recv(sockfd, buffer, sizeof(buffer) - 1, 0);
         resultado.valido = strstr(buffer, "SSH-") != NULL;
