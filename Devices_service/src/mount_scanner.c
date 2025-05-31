@@ -2,14 +2,22 @@
 #include "mount_scanner.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 static int es_usb(const char *dev, const char *mnt, const char *fs)
 {
-    // Detecta dispositivos reales USB y montajes simulados en /mnt
-    return (
-        (strstr(dev, "/dev/sd") && (strstr(mnt, "/media") || strstr(mnt, "/run/media") || strstr(mnt, "/mnt"))) ||
-        (strcmp(fs, "tmpfs") == 0 && strstr(mnt, "/mnt"))
-    );
+    // Dispositivo físico (USB real)
+    if (strstr(dev, "/dev/sd") && 
+        (strstr(mnt, "/media") || strstr(mnt, "/run/media") || strstr(mnt, "/mnt"))) {
+        return 1;
+    }
+
+    // Dispositivo simulado (tmpfs en /mnt)
+    if (strcmp(fs, "tmpfs") == 0 && strstr(mnt, "/mnt/usb")) {
+        return 1;
+    }
+
+    return 0;
 }
 
 size_t obtener_montajes_usb(MountInfo *out, size_t cap)

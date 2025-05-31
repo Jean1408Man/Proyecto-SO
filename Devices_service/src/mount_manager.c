@@ -7,8 +7,19 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <string.h>
 
 static MountState *tabla = NULL;
+
+// 🔧 Función para limpiar y normalizar mountpoint
+static void limpiar_path(char *dest, const char *src, size_t max_len) {
+    strncpy(dest, src, max_len - 1);
+    dest[max_len - 1] = '\0';
+
+    // Eliminar posibles caracteres finales no deseados (como '\n')
+    char *nl = strchr(dest, '\n');
+    if (nl) *nl = '\0';
+}
 
 static void refresh_mounts(void)
 {
@@ -19,12 +30,17 @@ static void refresh_mounts(void)
     size_t n = obtener_montajes_usb(list, 32);
 
     for (size_t i = 0; i < n; ++i) {
-        HASH_FIND_STR(tabla, list[i].mountpoint, ms);
+        char clean_mount[128];
+        limpiar_path(clean_mount, list[i].mountpoint, sizeof(clean_mount));
+
+        ms = NULL;
+        HASH_FIND_STR(tabla, clean_mount, ms);
+
         if (!ms) {
             ms = calloc(1, sizeof *ms);
-            strcpy(ms->mountpoint, list[i].mountpoint);
-            strcpy(ms->device, list[i].device);
-            strcpy(ms->fstype, list[i].fstype);
+            limpiar_path(ms->mountpoint, list[i].mountpoint, sizeof(ms->mountpoint));
+            limpiar_path(ms->device, list[i].device, sizeof(ms->device));
+            limpiar_path(ms->fstype, list[i].fstype, sizeof(ms->fstype));
             ms->escaneando = 0;
             pthread_mutex_init(&ms->mutex, NULL);
             HASH_ADD_STR(tabla, mountpoint, ms);
@@ -33,6 +49,7 @@ static void refresh_mounts(void)
             snprintf(msg, sizeof(msg), ">> MONTADO %s (%s)\n", ms->mountpoint, ms->device);
             enviar_mensaje(msg);
         }
+
         ms->seen = 1;
     }
 
@@ -75,7 +92,6 @@ void *scan_device_thread(void *arg) {
     return NULL;
 }
 
-
 void run_monitor(unsigned intervalo, int umbral)
 {
     while (1) {
@@ -99,4 +115,3 @@ void run_monitor(unsigned intervalo, int umbral)
         sleep(intervalo);
     }
 }
-
