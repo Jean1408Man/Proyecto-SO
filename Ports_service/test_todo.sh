@@ -1,70 +1,83 @@
 #!/bin/bash
 
-echo "🧪 Ejecutando pruebas de escaneo de puertos..."
+echo "🧪 Iniciando todos los servicios/nc listeners de prueba..."
 
-# ===== CASO 1: HTTP en puerto 8080 (válido, puerto en tabla) =====
-echo "[*] Caso 1: HTTP en puerto 8080"
+# ----- 1) Levantar servidor HTTP en 8080 -----
 python3 -m http.server 8080 >/dev/null 2>&1 &
-PID1=$!
-sleep 2
-./bin/escaner
-kill $PID1
-echo "[✓] Resultado esperado:"
-echo "PUERTO ABIERTO: 8080 → Servicio: HTTP ✅ esperado"
+PID_HTTP=$!
+echo "    - HTTP real en 8080 (pid $PID_HTTP)"
 
-# ===== CASO 2: Puerto 31337 no común =====
-echo "[*] Caso 2: netcat en puerto 31337 (no en tabla)"
+# ----- 2) Levantar netcat en 31337 (no en tabla) -----
 nc -l 31337 >/dev/null 2>&1 &
-PID2=$!
-sleep 2
-./bin/escaner
-kill $PID2
-echo "[✓] Resultado esperado:"
-echo "⚠️ PUERTO ABIERTO: 31337 → DESCONOCIDO (NO en tabla)"
-echo "    ↪ PID: ..., Usuario: ..., Programa: ..."
+PID_NC_31337=$!
+echo "    - netcat en 31337 (pid $PID_NC_31337)"
 
-# ===== CASO 3: Puerto 25 abierto pero sin comportamiento SMTP =====
-echo "[*] Caso 3: netcat en puerto 25 (esperado SMTP, pero falso)"
+# ----- 3) Levantar netcat en 25 (esperando banner SMTP) -----
 sudo nc -l 25 >/dev/null 2>&1 &
-PID3=$!
-sleep 2
-./bin/escaner
-sudo kill $PID3
-echo "[✓] Resultado esperado:"
-echo "⚠️ PUERTO ABIERTO: 25 → Servicio esperado: SMTP, pero comportamiento NO coincide"
-echo "    ↪ Banner recibido: "
-echo "    ↪ PID: ..., Usuario: ..., Programa: ..."
+PID_NC_25=$!
+echo "    - netcat en 25 (pid $PID_NC_25)"
 
-# ===== CASO 4: POP3 cerrado =====
-echo "[*] Caso 4: POP3 cerrado (puerto 110)"
-./bin/escaner
-echo "[✓] Resultado esperado:"
-echo "Puerto 110/tcp cerrado ✅"
-
-# ===== CASO 5: HTTP simulado en puerto 80 con netcat =====
-echo "[*] Caso 5: netcat en puerto 80 (esperado HTTP, comportamiento falso)"
+# ----- 4) Levantar netcat en 80 (simulando HTTP falso) -----
 sudo nc -l 80 >/dev/null 2>&1 &
-PID5=$!
+PID_NC_80=$!
+echo "    - netcat en 80 (pid $PID_NC_80)"
+
+# ----- (POP3 110: no levantar nada, queda cerrado) -----
+echo "    - (POP3 110 permanece cerrado)"
+
+# ----- (SSH en 22: asumimos que si está activo, ya está levantado; si no, no hará nada) -----
+echo "    - SSH 22: dependerá de que sshd esté activo o no en 127.0.0.1"
+
+# ----- (HTTPS 8443: si tienes un TLS activo, debe estarlo manualmente; sino no lo abrimos) -----
+echo "    - (HTTPS 8443: depende de que manualmente hayas iniciado un servidor TLS allí)"
+
+# Esperar un par de segundos para que todos los listeners queden listos
 sleep 2
+
+echo
+echo "🧪 Escaneando todos los puertos de golpe:"
 ./bin/escaner
-sudo kill $PID5
-echo "[✓] Resultado esperado:"
+
+# Una vez escaneado, matamos todos los procesos que levantamos:
+kill $PID_HTTP    2>/dev/null
+kill $PID_NC_31337 2>/dev/null
+sudo kill $PID_NC_25  2>/dev/null
+sudo kill $PID_NC_80  2>/dev/null
+
+echo
+echo "🧪 Resultados esperados (todos juntos):"
+echo
+echo "— Puerto 8080 (HTTP real) —"
+echo "PUERTO ABIERTO: 8080 → Servicio: HTTP ✅ esperado"
+echo
+echo "— Puerto 31337 (no en tabla) —"
+echo "⚠️ PUERTO ABIERTO: 31337 → DESCONOCIDO (NO en tabla)"
+echo "    ↪ PID: <pid de netcat en 31337>, Usuario: <tu_usuario>, Programa: /usr/bin/nc"
+echo
+echo "— Puerto 25 (netcat, simulando SMTP falso) —"
+echo "⚠️ PUERTO ABIERTO: 25 → Servicio esperado: SMTP, pero comportamiento NO coincide"
+echo "    ↪ No se recibió banner del servicio."
+echo "    ↪ PID: <pid de netcat en 25>, Usuario: <tu_usuario>, Programa: /usr/bin/nc"
+echo
+echo "— Puerto 80 (netcat, simulando HTTP falso) —"
 echo "⚠️ PUERTO ABIERTO: 80 → Servicio esperado: HTTP, pero comportamiento NO coincide"
-echo "    ↪ Banner recibido: "
-echo "    ↪ PID: ..., Usuario: ..., Programa: ..."
-
-# ===== CASO 6: SSH en puerto 22 (válido si activo) =====
-echo "[*] Caso 6: SSH en puerto 22 (si está activo)"
-./bin/escaner
-echo "[✓] Resultado esperado:"
+echo "    ↪ No se recibió banner del servicio."
+echo "    ↪ PID: <pid de netcat en 80>, Usuario: <tu_usuario>, Programa: /usr/bin/nc"
+echo
+echo "— Puerto 110 (POP3) —"
+echo "(no debe imprimirse ninguna línea porque está cerrado)"
+echo
+echo "— Puerto 22 (SSH) —"
+echo "Si SSH está activo en 127.0.0.1:22, debería verse:"
 echo "PUERTO ABIERTO: 22 → Servicio: SSH ✅ esperado"
-
-# ===== CASO 7: HTTPS en 8443 si está activado manualmente =====
-echo "[*] Caso 7: HTTPS en 8443 (si tienes TLS ahí)"
-./bin/escaner
-echo "[✓] Resultado esperado (si coincide con comportamiento):"
+echo "Si no está, simplemente no sale nada para 22."
+echo
+echo "— Puerto 8443 (HTTPS) —"
+echo "Si tienes un servidor TLS corriendo en 8443, debería verse:"
 echo "PUERTO ABIERTO: 8443 → Servicio: HTTPS ✅ esperado"
-echo "⚠️ o bien: comportamiento NO coincide + banner + PID info"
-
-# ===== FINAL =====
-echo "✅ Todas las pruebas finalizadas."
+echo "O bien, si algo abierto pero no responde correctamente, algo como:"
+echo "⚠️ PUERTO ABIERTO: 8443 → Servicio esperado: HTTPS, pero comportamiento NO coincide"
+echo "    ↪ Banner recibido: <datos binarios o vacío>"
+echo "    ↪ PID: <pid del proceso TLS>, Usuario: <tu_usuario>, Programa: <ruta del ejecutable TLS>"
+echo
+echo "✅ Fin de los resultados esperados."
