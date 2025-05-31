@@ -48,4 +48,4 @@ clean:
 test: all
 	@echo "🧪 Ejecutando pruebas..."
 	@chmod +x test_todo.sh
-	@./test_todo.sh
+	bash test_todo.sh
