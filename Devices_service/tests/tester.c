@@ -12,11 +12,17 @@
 int UMBRAL = 10;     // por defecto
 int ESPERA = 10;     // por defecto
 
+void imprimir_montajes_actuales() {
+    printf("📂 Verificando contenido de /proc/mounts:\n");
+    system("cat /proc/mounts | grep /mnt");
+}
+
 void crear_dispositivo(const char *path) {
     mkdir(BASE_PATH, 0755); // Asegura que /mnt exista
     mkdir(path, 0755);
     if (mount("tmpfs", path, "tmpfs", 0, "size=10M") == 0) {
         printf("[+] Montado: %s\n", path);
+        imprimir_montajes_actuales();
     } else {
         fprintf(stderr, "✗ Error al montar %s: %s\n", path, strerror(errno));
         exit(EXIT_FAILURE);
@@ -65,7 +71,6 @@ void modificar_contenido(const char *path, int index) {
     }
 
     remove(eliminado);
-
     sync();
 }
 
