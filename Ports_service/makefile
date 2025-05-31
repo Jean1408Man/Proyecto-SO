@@ -27,7 +27,7 @@ $(TARGET): $(OBJECTS)
 	@echo "✅ Compilación completada. Ejecuta: ./$(TARGET)"
 
 # Compilación de objetos
-$(OBJDIR)/%.o: $(SRCDIR)/%.c
+$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Carpetas
