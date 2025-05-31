@@ -14,8 +14,8 @@
 #include <string.h>
 #include <pwd.h>
 #include <sys/types.h>
-#include <dirent.h>
 
+// === ESTRUCTURAS ===
 typedef struct {
     int puerto_actual;
     int puerto_final;
@@ -27,6 +27,11 @@ typedef struct {
     int valido;
     char banner[512];
 } ResultadoVerificacion;
+
+// === PROTOTIPOS ===
+ResultadoVerificacion verificar_servicio(const char* servicio, int puerto);
+
+// === FUNCIONES ===
 
 static int puerto_abierto(int puerto) {
     const char* loopbacks[] = {
@@ -61,8 +66,6 @@ static int puerto_abierto(int puerto) {
     return 0;
 }
 
-
-// Busca el inode de un puerto en /proc/net/tcp
 unsigned long buscar_inode_por_puerto(int puerto) {
     FILE* archivo = fopen("/proc/net/tcp", "r");
     if (!archivo) return 0;
@@ -86,7 +89,6 @@ unsigned long buscar_inode_por_puerto(int puerto) {
     return 0;
 }
 
-// Busca qué proceso está usando ese inode
 void mostrar_info_proceso_por_inode(unsigned long inode) {
     DIR* proc = opendir("/proc");
     if (!proc) return;
@@ -114,13 +116,11 @@ void mostrar_info_proceso_por_inode(unsigned long inode) {
                 char buscado[64];
                 snprintf(buscado, sizeof(buscado), "socket:[%lu]", inode);
                 if (strcmp(destino, buscado) == 0) {
-                    // Obtener programa
                     char exe_path[256], exe[256];
                     snprintf(exe_path, sizeof(exe_path), "/proc/%d/exe", pid);
                     ssize_t exe_len = readlink(exe_path, exe, sizeof(exe) - 1);
                     exe[exe_len > 0 ? exe_len : 0] = '\0';
 
-                    // Obtener usuario
                     struct stat st;
                     snprintf(path, sizeof(path), "/proc/%d", pid);
                     if (stat(path, &st) == 0) {
@@ -169,12 +169,21 @@ static void* trabajador(void *arg) {
                         printf("    ↪ No se pudo determinar el proceso asociado.\n");
                     }
                 }
+            } else {
+                printf("⚠️ PUERTO ABIERTO: %d → DESCONOCIDO (NO en tabla)\n", puerto);
+                unsigned long inode = buscar_inode_por_puerto(puerto);
+                if (inode != 0) {
+                    mostrar_info_proceso_por_inode(inode);
+                } else {
+                    printf("    ↪ No se pudo determinar el proceso asociado.\n");
+                }
             }
-
+        }
     }
     return NULL;
 }
 
+// Puertos extendidos
 static const int puertos_extra[] = {2121, 2222, 2525, 31337, 8080, 8000, 8443};
 static const int total_extra = sizeof(puertos_extra) / sizeof(puertos_extra[0]);
 
@@ -195,13 +204,12 @@ void escanear_puertos(GHashTable *tabla, int inicio, int fin) {
 
     pthread_mutex_destroy(&ctx.lock);
 
-    if (fin <= 2121) {
+    if (fin <= 2120) {
         for (int i = 0; i < total_extra; ++i) {
             escanear_puertos(tabla, puertos_extra[i], puertos_extra[i]);
         }
     }
 }
-
 
 ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
     ResultadoVerificacion resultado = { .valido = 0 };
@@ -214,7 +222,7 @@ ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
         .sin_addr.s_addr = inet_addr("127.0.0.1")
     };
 
-    struct timeval tv = { 0, 200000 }; // 200 ms
+    struct timeval tv = { 0, 200000 };
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
@@ -233,19 +241,19 @@ ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
     } else if (strcmp(servicio, "SSH") == 0) {
         recv(sockfd, buffer, sizeof(buffer) - 1, 0);
         resultado.valido = strstr(buffer, "SSH-") != NULL;
-    } else if (strcmp(servicio, "SMTP") == 0 || strcmp(servicio, "SMTPS") == 0 || strcmp(servicio, "SMTP (STARTTLS)") == 0) {
+    } else if (strstr(servicio, "SMTP")) {
         recv(sockfd, buffer, sizeof(buffer) - 1, 0);
         const char* ehlo = "EHLO prueba\r\n";
         send(sockfd, ehlo, strlen(ehlo), 0);
         recv(sockfd, buffer, sizeof(buffer) - 1, 0);
         resultado.valido = strstr(buffer, "220") != NULL || strstr(buffer, "250") != NULL;
-    } else if (strcmp(servicio, "POP3") == 0 || strcmp(servicio, "POP3S") == 0) {
+    } else if (strstr(servicio, "POP3")) {
         recv(sockfd, buffer, sizeof(buffer) - 1, 0);
         resultado.valido = strstr(buffer, "+OK") != NULL;
-    } else if (strcmp(servicio, "IMAP") == 0 || strcmp(servicio, "IMAPS") == 0) {
+    } else if (strstr(servicio, "IMAP")) {
         recv(sockfd, buffer, sizeof(buffer) - 1, 0);
         resultado.valido = strstr(buffer, "* OK") != NULL;
-    } else if (strcmp(servicio, "FTP") == 0 || strcmp(servicio, "FTP-DATA") == 0) {
+    } else if (strstr(servicio, "FTP")) {
         recv(sockfd, buffer, sizeof(buffer) - 1, 0);
         resultado.valido = strstr(buffer, "220") != NULL;
     } else if (strcmp(servicio, "Telnet") == 0) {
@@ -258,5 +266,3 @@ ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
     strncpy(resultado.banner, buffer, sizeof(resultado.banner) - 1);
     return resultado;
 }
-
-
