@@ -214,11 +214,12 @@ void mostrar_info_proceso_por_inode(unsigned long inode) {
  */
 static void* trabajador(void *arg) {
     ContextoEscaneo *ctx = (ContextoEscaneo*)arg;
+
     while (1) {
         if (ctx == NULL || ctx->tabla == NULL) {
-    fprintf(stderr, "ERROR: Contexto o tabla inválida\n");
-    pthread_exit(NULL);
-}
+            fprintf(stderr, "ERROR: Contexto o tabla inválida\n");
+            pthread_exit(NULL);
+        }
 
         pthread_mutex_lock(&ctx->lock);
         if (ctx->puerto_actual > ctx->puerto_final) {
@@ -228,13 +229,17 @@ static void* trabajador(void *arg) {
         int puerto = ctx->puerto_actual++;
         pthread_mutex_unlock(&ctx->lock);
 
-        if (puerto_abierto(puerto)) {
+        printf("DEBUG: Revisando puerto %d...\n", puerto);
 
-            printf("DEBUG: Puerto %d siendo evaluado\n", puerto);
+        if (puerto_abierto(puerto)) {
+            printf("DEBUG: Puerto %d está ABIERTO\n", puerto);
 
             const char *svc = buscar_servicio(ctx->tabla, puerto);
             if (svc) {
+                printf("DEBUG: Servicio esperado en puerto %d: %s\n", puerto, svc);
                 ResultadoVerificacion verif = verificar_servicio(svc, puerto);
+                printf("DEBUG: Verificación terminada para puerto %d (valido = %d)\n", puerto, verif.valido);
+
                 if (verif.valido) {
                     printf("PUERTO ABIERTO: %d → Servicio: %s ✅ esperado\n", puerto, svc);
                     fflush(stdout);
@@ -266,6 +271,8 @@ static void* trabajador(void *arg) {
                     fflush(stdout);
                 }
             }
+        } else {
+            printf("DEBUG: Puerto %d está CERRADO\n", puerto);
         }
     }
     return NULL;
@@ -408,19 +415,32 @@ ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
         }
     }
     else if (strstr(servicio, "SMTP")) {
-        // Recibimos banner inicial (si existe)
-        bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        // Enviamos EHLO para forzar respuesta
+    bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
+        if (bytes_recibidos < 0) {
+            perror("WARNING: recv inicial SMTP");
+        }
+
+        // Enviamos EHLO
         const char* ehlo = "EHLO prueba\r\n";
-        send(sockfd, ehlo, strlen(ehlo), 0);
-        // Leemos la respuesta
+        if (send(sockfd, ehlo, strlen(ehlo), 0) < 0) {
+            perror("WARNING: send EHLO SMTP");
+        }
+
+        // Leemos respuesta
         bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        // Válido si contiene "220" o "250", o si algo fue recibido
-        if ((bytes_recibidos > 0 && (strstr(buffer, "220") || strstr(buffer, "250"))) 
-            || bytes_recibidos > 0) {
-            resultado.valido = 1;
+        if (bytes_recibidos < 0) {
+            perror("WARNING: recv respuesta SMTP");
+        }
+
+        if (bytes_recibidos > 0) {
+            buffer[bytes_recibidos] = '\0';
+            printf("DEBUG: SMTP banner recibido: '%s'\n", buffer);
+            if (strstr(buffer, "220") || strstr(buffer, "250")) {
+                resultado.valido = 1;
+            }
         }
     }
+
     else if (strstr(servicio, "POP3")) {
         bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
         if (bytes_recibidos > 0 && strstr(buffer, "+OK") != NULL) {
