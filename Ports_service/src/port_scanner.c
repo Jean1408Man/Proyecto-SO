@@ -376,6 +376,9 @@ void escanear_puertos(GHashTable *tabla, int inicio, int fin) {
 ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
     ResultadoVerificacion resultado = { .valido = 0, .banner = "" };
 
+     // Proteger esta función contra SIGPIPE (por ejemplo, si el socket remoto se cierra)
+    signal(SIGPIPE, SIG_IGN);
+
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) {
         perror("ERROR: socket en verificar_servicio");
