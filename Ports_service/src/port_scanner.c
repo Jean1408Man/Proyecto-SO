@@ -215,6 +215,11 @@ void mostrar_info_proceso_por_inode(unsigned long inode) {
 static void* trabajador(void *arg) {
     ContextoEscaneo *ctx = (ContextoEscaneo*)arg;
     while (1) {
+        if (ctx == NULL || ctx->tabla == NULL) {
+    fprintf(stderr, "ERROR: Contexto o tabla inválida\n");
+    pthread_exit(NULL);
+}
+
         pthread_mutex_lock(&ctx->lock);
         if (ctx->puerto_actual > ctx->puerto_final) {
             pthread_mutex_unlock(&ctx->lock);
@@ -224,6 +229,9 @@ static void* trabajador(void *arg) {
         pthread_mutex_unlock(&ctx->lock);
 
         if (puerto_abierto(puerto)) {
+
+            printf("DEBUG: Puerto %d siendo evaluado\n", puerto);
+
             const char *svc = buscar_servicio(ctx->tabla, puerto);
             if (svc) {
                 ResultadoVerificacion verif = verificar_servicio(svc, puerto);
@@ -299,9 +307,11 @@ void escanear_puertos(GHashTable *tabla, int inicio, int fin) {
     for (int i = 0; i < NUM_HILOS; ++i) {
         int rc = pthread_create(&hilos[i], NULL, trabajador, &ctx);
         if (rc != 0) {
-            fprintf(stderr, "ERROR: pthread_create[%d] devolvió código %d\n", i, rc);
+            fprintf(stderr, "ERROR: No se pudo crear hilo %d (código %d)\n", i, rc);
+            exit(EXIT_FAILURE);
         }
     }
+
 
     for (int i = 0; i < NUM_HILOS; ++i) {
         int rc = pthread_join(hilos[i], NULL);
