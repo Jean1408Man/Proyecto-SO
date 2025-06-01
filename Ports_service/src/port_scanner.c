@@ -51,7 +51,10 @@ static int puerto_abierto(int puerto) {
 
     for (int i = 0; i < total_loopbacks; ++i) {
         int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-        if (sockfd < 0) continue;
+        if (sockfd < 0) {
+            perror("ERROR: socket en puerto_abierto");
+            continue; 
+        }
 
         struct sockaddr_in addr = {
             .sin_family = AF_INET,
@@ -59,10 +62,13 @@ static int puerto_abierto(int puerto) {
             .sin_addr.s_addr = inet_addr(loopbacks[i])
         };
 
-        // Timeout de 1 segundo para recibir y enviar
         struct timeval tv = { 1, 0 };
-        setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-        setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+            perror("ERROR: setsockopt SO_RCVTIMEO");
+        }
+        if (setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
+            perror("ERROR: setsockopt SO_SNDTIMEO");
+        }
 
         if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
             close(sockfd);
@@ -84,20 +90,27 @@ static int puerto_abierto(int puerto) {
  */
 unsigned long buscar_inode_por_puerto(int puerto) {
     FILE* archivo = fopen("/proc/net/tcp", "r");
-    if (!archivo) return 0;
+    if (!archivo) {
+        perror("ERROR: fopen /proc/net/tcp");
+        return 0;
+    }
 
     char linea[512];
-    fgets(linea, sizeof(linea), archivo); // Saltar cabecera
+    if (!fgets(linea, sizeof(linea), archivo)) {
+        fprintf(stderr, "ERROR: No se pudo leer la cabecera de /proc/net/tcp\n");
+        fclose(archivo);
+        return 0;
+    }
 
     char local[64];
     unsigned long inode;
     while (fgets(linea, sizeof(linea), archivo)) {
         int local_port;
-        // Ejemplo de línea:
-        //   sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
-        //    0: 0100007F:0016 00000000:0000 0A ...
-        sscanf(linea, "%*d: %64[0-9A-Fa-f]:%x %*s %*s %*s %*s %*s %*s %*s %*s %lu",
-               local, &local_port, &inode);
+        if (sscanf(linea, "%*d: %64[0-9A-Fa-f]:%x %*s %*s %*s %*s %*s %*s %*s %*s %lu",
+                   local, &local_port, &inode) < 3) {
+            fprintf(stderr, "WARNING: sscanf falló en línea: %s\n", linea);
+            continue;
+        }
         if (local_port == puerto) {
             fclose(archivo);
             return inode;
@@ -106,6 +119,7 @@ unsigned long buscar_inode_por_puerto(int puerto) {
     fclose(archivo);
     return 0;
 }
+
 
 /*
  * mostrar_info_proceso_por_inode(unsigned long inode)
@@ -119,52 +133,63 @@ unsigned long buscar_inode_por_puerto(int puerto) {
  */
 void mostrar_info_proceso_por_inode(unsigned long inode) {
     DIR* proc = opendir("/proc");
-    if (!proc) return;
+    if (!proc) {
+        perror("ERROR: opendir /proc");
+        return;
+    }
 
     struct dirent* entrada;
     while ((entrada = readdir(proc))) {
-        // Solo interesan directorios numéricos (PID)
         if (entrada->d_type != DT_DIR) continue;
         int pid = atoi(entrada->d_name);
         if (pid <= 0) continue;
 
-        char path[256];
-        snprintf(path, sizeof(path), "/proc/%d/fd", pid);
-        DIR* fds = opendir(path);
-        if (!fds) continue;
+        char path_fds[256];
+        snprintf(path_fds, sizeof(path_fds), "/proc/%d/fd", pid);
+        DIR* fds = opendir(path_fds);
+        if (!fds) {
+            continue;
+        }
 
         struct dirent* fd;
         while ((fd = readdir(fds))) {
-            // Construir ruta /proc/<pid>/fd/<fdnum>
             char enlace[256], destino[256];
-            snprintf(enlace, sizeof(enlace), "%s/%s", path, fd->d_name);
-
+            snprintf(enlace, sizeof(enlace), "%s/%s", path_fds, fd->d_name);
             ssize_t len = readlink(enlace, destino, sizeof(destino) - 1);
-            if (len != -1) {
-                destino[len] = '\0';
-                char buscado[64];
-                snprintf(buscado, sizeof(buscado), "socket:[%lu]", inode);
-                if (strcmp(destino, buscado) == 0) {
-                    // Encontramos el socket; ahora mostramos PID, usuario y ejecutable
-                    char exe_path[256], exe[256];
-                    snprintf(exe_path, sizeof(exe_path), "/proc/%d/exe", pid);
-                    ssize_t exe_len = readlink(exe_path, exe, sizeof(exe) - 1);
-                    if (exe_len > 0) exe[exe_len] = '\0';
-                    else exe[0] = '\0';
+            if (len < 0) {
+                continue;
+            }
+            destino[len] = '\0';
 
-                    struct stat st;
-                    snprintf(path, sizeof(path), "/proc/%d", pid);
-                    if (stat(path, &st) == 0) {
-                        struct passwd* pw = getpwuid(st.st_uid);
-                        printf("    ↪ PID: %d, Usuario: %s, Programa: %s\n",
-                               pid,
-                               pw ? pw->pw_name : "desconocido",
-                               exe_len > 0 ? exe : "desconocido");
-                    }
-                    closedir(fds);
-                    closedir(proc);
-                    return;
+            char buscado[64];
+            snprintf(buscado, sizeof(buscado), "socket:[%lu]", inode);
+            if (strcmp(destino, buscado) == 0) {
+                char exe_path[256], exe[256];
+                snprintf(exe_path, sizeof(exe_path), "/proc/%d/exe", pid);
+                ssize_t exe_len = readlink(exe_path, exe, sizeof(exe) - 1);
+                if (exe_len < 0) {
+                    perror("WARNING: readlink /proc/<pid>/exe");
+                    exe[0] = '\0';
+                } else {
+                    exe[exe_len] = '\0';
                 }
+
+                struct stat st;
+                char proc_path[256];
+                snprintf(proc_path, sizeof(proc_path), "/proc/%d", pid);
+                if (stat(proc_path, &st) != 0) {
+                    perror("WARNING: stat /proc/<pid>");
+                } else {
+                    struct passwd* pw = getpwuid(st.st_uid);
+                    printf("    ↪ PID: %d, Usuario: %s, Programa: %s\n",
+                           pid,
+                           pw ? pw->pw_name : "desconocido",
+                           exe_len > 0 ? exe : "desconocido");
+                }
+
+                closedir(fds);
+                closedir(proc);
+                return;
             }
         }
         closedir(fds);
@@ -203,32 +228,34 @@ static void* trabajador(void *arg) {
             if (svc) {
                 ResultadoVerificacion verif = verificar_servicio(svc, puerto);
                 if (verif.valido) {
-                    // Caso esperado: banner coincidente o simple conexión válida (para HTTPS)
                     printf("PUERTO ABIERTO: %d → Servicio: %s ✅ esperado\n", puerto, svc);
+                    fflush(stdout);
                 } else {
-                    // Comportamiento no coincide: imprimimos banner (si existe) y PID
                     printf("⚠️ PUERTO ABIERTO: %d → Servicio esperado: %s, pero comportamiento NO coincide\n", puerto, svc);
+                    fflush(stdout);
                     if (strlen(verif.banner) > 0) {
                         printf("    ↪ Banner recibido: %s\n", verif.banner);
                     } else {
-                        // Explicación: no hubo banner; por ejemplo, netcat no envía nada sin echo
                         printf("    ↪ No se recibió banner del servicio.\n");
                     }
+                    fflush(stdout);
                     unsigned long inode = buscar_inode_por_puerto(puerto);
                     if (inode != 0) {
                         mostrar_info_proceso_por_inode(inode);
                     } else {
                         printf("    ↪ No se pudo determinar el proceso asociado (inode no hallado).\n");
+                        fflush(stdout);
                     }
                 }
             } else {
-                // Servicio no está en la tabla → marca como sospechoso
                 printf("⚠️ PUERTO ABIERTO: %d → DESCONOCIDO (NO en tabla)\n", puerto);
+                fflush(stdout);
                 unsigned long inode = buscar_inode_por_puerto(puerto);
                 if (inode != 0) {
                     mostrar_info_proceso_por_inode(inode);
                 } else {
                     printf("    ↪ No se pudo determinar el proceso asociado (inode no hallado).\n");
+                    fflush(stdout);
                 }
             }
         }
@@ -264,17 +291,28 @@ void escanear_puertos(GHashTable *tabla, int inicio, int fin) {
         .puerto_final  = fin,
         .tabla         = tabla
     };
-    pthread_mutex_init(&ctx.lock, NULL);
-
-    for (int i = 0; i < NUM_HILOS; ++i) {
-        pthread_create(&hilos[i], NULL, trabajador, &ctx);
+    if (pthread_mutex_init(&ctx.lock, NULL) != 0) {
+        perror("ERROR: pthread_mutex_init");
+        return;
     }
 
     for (int i = 0; i < NUM_HILOS; ++i) {
-        pthread_join(hilos[i], NULL);
+        int rc = pthread_create(&hilos[i], NULL, trabajador, &ctx);
+        if (rc != 0) {
+            fprintf(stderr, "ERROR: pthread_create[%d] devolvió código %d\n", i, rc);
+        }
     }
 
-    pthread_mutex_destroy(&ctx.lock);
+    for (int i = 0; i < NUM_HILOS; ++i) {
+        int rc = pthread_join(hilos[i], NULL);
+        if (rc != 0) {
+            fprintf(stderr, "ERROR: pthread_join[%d] devolvió código %d\n", i, rc);
+        }
+    }
+
+    if (pthread_mutex_destroy(&ctx.lock) != 0) {
+        perror("ERROR: pthread_mutex_destroy");
+    }
 
     // Solo al escanear el rango base 1–1024, incluimos los puertos extra
     if (inicio == 1 && fin == 1024) {
@@ -305,7 +343,10 @@ ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
     ResultadoVerificacion resultado = { .valido = 0, .banner = "" };
 
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) return resultado;
+    if (sockfd < 0) {
+        perror("ERROR: socket en verificar_servicio");
+        return resultado;
+    }
 
     struct sockaddr_in addr = {
         .sin_family = AF_INET,
@@ -313,14 +354,18 @@ ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
         .sin_addr.s_addr = inet_addr("127.0.0.1")
     };
 
-    // Timeout de 1 segundo en recv/send
     struct timeval tv = { 1, 0 };
-    setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-    setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+        perror("ERROR: setsockopt SO_RCVTIMEO en verificar_servicio");
+    }
+    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
+        perror("ERROR: setsockopt SO_SNDTIMEO en verificar_servicio");
+    }
 
     if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
+        perror("WARNING: connect en verificar_servicio");
         close(sockfd);
-        return resultado;  // No se pudo conectar
+        return resultado;
     }
 
     char buffer[512] = {0};
@@ -328,8 +373,13 @@ ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
 
     if (strcmp(servicio, "HTTP") == 0) {
         const char *req = "HEAD / HTTP/1.0\r\n\r\n";
-        send(sockfd, req, strlen(req), 0);
+        if (send(sockfd, req, strlen(req), 0) < 0) {
+            perror("WARNING: send HTTP en verificar_servicio");
+        }
         bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
+        if (bytes_recibidos < 0) {
+            perror("WARNING: recv HTTP en verificar_servicio");
+        }
         if (bytes_recibidos > 0 && strncmp(buffer, "HTTP/", 5) == 0) {
             resultado.valido = 1;
         }
