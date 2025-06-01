@@ -1,57 +1,64 @@
-# === CONFIGURACIÓN ===
-CC = gcc
-CFLAGS = -Wall -Wextra -Iinclude `pkg-config --cflags glib-2.0`
-LDFLAGS = `pkg-config --libs glib-2.0` -lpthread
+CC        = gcc
+CFLAGS    = -Wall -g `pkg-config --cflags glib-2.0` -I$(INC_DIR)
+LDFLAGS   = `pkg-config --libs glib-2.0` -pthread
 
-# === DIRECTORIOS ===
-SRCDIR = src
-OBJDIR = build
-BINDIR = bin
-TESTDIR = tests
+SRC_DIR    = src
+INC_DIR    = include
+BUILD_DIR  = build
+BIN_DIR    = bin
+TEST_DIR   = tests
 
-# === ARCHIVOS ===
-SOURCES = $(wildcard $(SRCDIR)/*.c)
-OBJECTS = $(patsubst $(SRCDIR)/%.c, $(OBJDIR)/%.o, $(SOURCES))
-TARGET = $(BINDIR)/escaner
+# Código fuente del escáner
+SRCS       = \
+    $(SRC_DIR)/main.c \
+    $(SRC_DIR)/port_scanner.c \
+    $(SRC_DIR)/port_utils.c \
+    $(SRC_DIR)/scanner_utils.c
 
-TEST_SCANNER_SRC = $(TESTDIR)/test_scanner.c
-TEST_SCANNER_BIN = $(BINDIR)/test_scanner
+OBJS       = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
+TARGET     = $(BIN_DIR)/escaner
 
-# === REGLAS ===
-all: $(TEST_SCANNER_BIN) $(TARGET)
+# Fuente del tester y su binario
+TEST_SRC   = $(TEST_DIR)/test_scanner.c
+TEST_OBJ   = $(patsubst $(TEST_DIR)/%.c, $(BUILD_DIR)/%.o, $(TEST_SRC))
+TEST_BIN   = $(BIN_DIR)/test_scanner
 
-# Ejecuta el sistema completo: primero test_scanner, luego escaner
-run: all
-	@echo "🚀 Ejecutando prueba con puertos simulados..."
-	@$(TEST_SCANNER_BIN) & \
-	sleep 1 && ./$(TARGET); \
-	wait
+.PHONY: all clean run test
 
-# Binario principal
-$(TARGET): | $(BINDIR) $(OBJDIR)
-$(TARGET): $(OBJECTS)
-	$(CC) $(OBJECTS) -o $@ $(LDFLAGS)
-	@echo "✅ Compilación de escaner completada. Ejecuta: ./$(TARGET)"
+all: $(TARGET) $(TEST_BIN)
 
-# Binario test_scanner
-$(TEST_SCANNER_BIN): $(TEST_SCANNER_SRC) | $(BINDIR)
-	$(CC) $(TEST_SCANNER_SRC) -o $@ $(LDFLAGS)
-	@echo "🛠️  test_scanner compilado como $(TEST_SCANNER_BIN)"
+# ---------- Regla para el escáner ----------
+$(TARGET): $(OBJS)
+	@mkdir -p $(BIN_DIR)
+	$(CC) -o $@ $^ $(LDFLAGS)
 
-# Compilación de objetos
-$(OBJDIR)/%.o: $(SRCDIR)/%.c | $(OBJDIR)
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+	@mkdir -p $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Carpetas necesarias
-$(BINDIR):
-	mkdir -p $(BINDIR)
+# ---------- Regla para el tester ----------
+$(TEST_BIN): $(TEST_OBJ)
+	@mkdir -p $(BIN_DIR)
+	$(CC) -o $@ $<
 
-$(OBJDIR):
-	mkdir -p $(OBJDIR)
+$(BUILD_DIR)/test_scanner.o: $(TEST_SRC)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
-# Limpieza
-clean:
-	@echo "🧹 Limpiando..."
-	@rm -rf $(OBJDIR)/*.o $(BINDIR)/*
+# ---------- Objetivo para correr el escáner (rango por defecto) ----------
+run: all
+	@echo "Ejecutando escáner (rango por defecto 1–6000)..."
+	@$(TARGET)
 
-.PHONY: all clean run
+# ---------- Objetivo para pruebas automáticas ----------
+test: all
+	@echo "Iniciando test_scanner en segundo plano..."
+	@$(TEST_BIN) &
+	@sleep 1
+	@echo "Ejecutando escáner sobre cada puerto de prueba..."
+	@for p in 21 22 25 80 31337 4444; do \
+	    echo "----- Escaneando puerto $$p -----"; \
+	    sudo $(TARGET) $$p $$p; \
+	done
+	@echo "Matando proceso test_scanner..."
+	@pkill -f test_scanner || true

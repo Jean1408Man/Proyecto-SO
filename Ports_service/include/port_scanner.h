@@ -1,22 +1,14 @@
 #ifndef PORT_SCANNER_H
 #define PORT_SCANNER_H
 
-#include <glib.h>
-
-/** Número de hilos que usarán el pool */
-#define NUM_HILOS 10
+#include "models.h"
 
 /**
- * Escanea de forma concurrente (pool de hilos) los puertos
- * en el rango [inicio, fin] sobre 127.0.0.1. Por cada puerto
- * abierto imprime en stdout:
- *   - si tiene servicio conocido, lo muestra
- *   - si no, lo marca como sospechoso.
- *
- * @tabla  tabla hash de servicios (de port_utils)
- * @inicio puerto inicial (>=1)
- * @fin    puerto final   (<=1024)
+ * Escanea puertos TCP en localhost, desde start_port hasta end_port (inclusive).
+ * Devuelve un ScanResult con un arreglo de ScanOutput (solo puertos abiertos).
+ * El llamador es responsable de liberar cada banner y cada dangerous_word,
+ * y finalmente el arreglo data.
  */
-void escanear_puertos(GHashTable *tabla, int inicio, int fin);
+ScanResult scan_ports(int start_port, int end_port);
 
 #endif // PORT_SCANNER_H

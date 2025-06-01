@@ -1,525 +1,300 @@
-#define _DEFAULT_SOURCE
+// src/port_scanner.c
 
 #include "port_scanner.h"
+#include "scanner_utils.h"
 #include "port_utils.h"
+#include "models.h"
 
+#include <glib.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <pthread.h>
-#include <sys/time.h>
-#include <sys/stat.h>
-#include <dirent.h>
 #include <string.h>
-#include <pwd.h>
+#include <unistd.h>
 #include <sys/types.h>
+#include <pwd.h>
+#include <limits.h>
+#include <ctype.h>
 
-// === ESTRUCTURAS ===
-typedef struct {
-    int puerto_actual;
-    int puerto_final;
-    pthread_mutex_t lock;
-    GHashTable *tabla;
-} ContextoEscaneo;
+#define MAX_THREADS 100
 
-typedef struct {
-    int valido;            // 1 si la verificación coincide o se acepta, 0 si no
-    char banner[512];      // Banner recibido/payload leído
-} ResultadoVerificacion;
+static int s_start_port;
+static int s_end_port;
+static int s_next_port;
+static int s_output_index;
+static ScanOutput *s_output;    // arreglo pre-alloc de tamaño (end - start + 1)
+static GHashTable *s_tabla;     // tabla de puertos/servicios
+static pthread_mutex_t s_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-// === PROTOTIPOS ===
-ResultadoVerificacion verificar_servicio(const char* servicio, int puerto);
-
-// === FUNCIONES AUXILIARES ===
-
-/*
- * puerto_abierto(int puerto)
- * ---------------------------
- *   Intenta conectar TCP en localhost:puerto con un timeout de 1 segundo.
- *   Retorna 1 si connect() tuvo éxito, 0 en caso contrario.
- *
- *   Usamos varios loopbacks en array por si hay routing especial a 127.x.x.x.
+/**
+ * Lee de /proc/[pid]/status la línea "Uid:" y devuelve el UID real en *uid_out.
+ * Retorna 0 si tuvo éxito, -1 en caso contrario.
  */
-static int puerto_abierto(int puerto) {
-    const char* loopbacks[] = {
-        "127.0.0.1",
-        "127.1.1.1",
-        "127.1.2.7"
-    };
-    const int total_loopbacks = sizeof(loopbacks) / sizeof(loopbacks[0]);
+static int get_uid_of_pid(pid_t pid, uid_t *uid_out) {
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "/proc/%d/status", pid);
+    FILE *f = fopen(path, "r");
+    if (!f) return -1;
 
-    for (int i = 0; i < total_loopbacks; ++i) {
-        int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-        if (sockfd < 0) {
-            perror("ERROR: socket en puerto_abierto");
-            continue; 
-        }
-
-        struct sockaddr_in addr = {
-            .sin_family = AF_INET,
-            .sin_port = htons(puerto),
-            .sin_addr.s_addr = inet_addr(loopbacks[i])
-        };
-
-        struct timeval tv = { 1, 0 };
-        if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-            perror("ERROR: setsockopt SO_RCVTIMEO");
-        }
-        if (setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
-            perror("ERROR: setsockopt SO_SNDTIMEO");
-        }
-
-        if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) == 0) {
-            close(sockfd);
-            return 1;
-        }
-        close(sockfd);
-    }
-    return 0;
-}
-
-/*
- * buscar_inode_por_puerto(int puerto)
- * -----------------------------------
- *   Busca en /proc/net/tcp la línea que corresponda al puerto dado
- *   y retorna el inode asociado. Si no lo encuentra, retorna 0.
- *
- *   Esto se usa para, más adelante, recorrer /proc/<pid>/fd y comparar
- *   enlaces simbólicos a "socket:[inode]" para hallar el PID/proceso.
- */
-unsigned long buscar_inode_por_puerto(int puerto) {
-    FILE* archivo = fopen("/proc/net/tcp", "r");
-    if (!archivo) {
-        perror("ERROR: fopen /proc/net/tcp");
-        return 0;
-    }
-
-    char linea[512];
-    if (!fgets(linea, sizeof(linea), archivo)) {
-        fprintf(stderr, "ERROR: No se pudo leer la cabecera de /proc/net/tcp\n");
-        fclose(archivo);
-        return 0;
-    }
-
-    char local[64];
-    unsigned long inode;
-    while (fgets(linea, sizeof(linea), archivo)) {
-        int local_port;
-        if (sscanf(linea, "%*d: %64[0-9A-Fa-f]:%x %*s %*s %*s %*s %*s %*s %*s %*s %lu",
-                   local, &local_port, &inode) < 3) {
-            fprintf(stderr, "WARNING: sscanf falló en línea: %s\n", linea);
-            continue;
-        }
-        if (local_port == puerto) {
-            fclose(archivo);
-            return inode;
-        }
-    }
-    fclose(archivo);
-    return 0;
-}
-
-
-/*
- * mostrar_info_proceso_por_inode(unsigned long inode)
- * ---------------------------------------------------
- *   Recorre /proc/<pid>/fd/* y usa readlink para comparar "socket:[inode]".
- *   Si lo encuentra, recupera el ejecutable real (/proc/<pid>/exe) y el usuario
- *   asociado (/proc/<pid> stat -> st_uid). Imprime:
- *     PID, Usuario y Programa.
- *
- *   Si no halla nada, retorna sin imprimir nada.
- */
-void mostrar_info_proceso_por_inode(unsigned long inode) {
-    DIR* proc = opendir("/proc");
-    if (!proc) {
-        perror("ERROR: opendir /proc");
-        return;
-    }
-
-    struct dirent* entrada;
-    while ((entrada = readdir(proc))) {
-        if (entrada->d_type != DT_DIR) continue;
-        int pid = atoi(entrada->d_name);
-        if (pid <= 0) continue;
-
-        char path_fds[256];
-        snprintf(path_fds, sizeof(path_fds), "/proc/%d/fd", pid);
-        DIR* fds = opendir(path_fds);
-        if (!fds) {
-            continue;
-        }
-
-        struct dirent* fd;
-        while ((fd = readdir(fds))) {
-            char enlace[256], destino[256];
-            snprintf(enlace, sizeof(enlace), "%s/%s", path_fds, fd->d_name);
-            ssize_t len = readlink(enlace, destino, sizeof(destino) - 1);
-            if (len < 0) {
-                continue;
-            }
-            destino[len] = '\0';
-
-            char buscado[64];
-            snprintf(buscado, sizeof(buscado), "socket:[%lu]", inode);
-            if (strcmp(destino, buscado) == 0) {
-                char exe_path[256], exe[256];
-                snprintf(exe_path, sizeof(exe_path), "/proc/%d/exe", pid);
-                ssize_t exe_len = readlink(exe_path, exe, sizeof(exe) - 1);
-                if (exe_len < 0) {
-                    perror("WARNING: readlink /proc/<pid>/exe");
-                    exe[0] = '\0';
-                } else {
-                    exe[exe_len] = '\0';
-                }
-
-                struct stat st;
-                char proc_path[256];
-                snprintf(proc_path, sizeof(proc_path), "/proc/%d", pid);
-                if (stat(proc_path, &st) != 0) {
-                    perror("WARNING: stat /proc/<pid>");
-                } else {
-                    struct passwd* pw = getpwuid(st.st_uid);
-                    printf("    ↪ PID: %d, Usuario: %s, Programa: %s\n",
-                           pid,
-                           pw ? pw->pw_name : "desconocido",
-                           exe_len > 0 ? exe : "desconocido");
-                }
-
-                closedir(fds);
-                closedir(proc);
-                return;
-            }
-        }
-        closedir(fds);
-    }
-    closedir(proc);
-}
-
-/*
- * trabajador(void *arg)
- * ---------------------
- *   Rutina que ejecuta cada hilo trabajador. 
- *   Toma un puerto del ContextoEscaneo y, si está abierto,
- *   busca su servicio en la tabla y ejecuta la lógica de verificación.
- *
- *   - Si el servicio es conocido, invoca verificar_servicio() y
- *     compara. Imprime ✅ o ⚠ según corresponda.
- *   - Si el servicio NO es conocido, imprime “DESCONOCIDO” y busca PID.
- *
- *   Notas:
- *   - Se usa pthread_mutex para distribuir puertos entre hilos.
- *   - Retorna NULL al terminar.
- */
-static void* trabajador(void *arg) {
-    ContextoEscaneo *ctx = (ContextoEscaneo*)arg;
-
-    while (1) {
-        if (ctx == NULL || ctx->tabla == NULL) {
-            fprintf(stderr, "ERROR: contexto o tabla inválida en trabajador()\n");
-            pthread_exit(NULL);
-        }
-
-        pthread_mutex_lock(&ctx->lock);
-        if (ctx->puerto_actual > ctx->puerto_final) {
-            pthread_mutex_unlock(&ctx->lock);
+    char line[256];
+    uid_t uid = (uid_t)-1;
+    while (fgets(line, sizeof(line), f)) {
+        if (strncmp(line, "Uid:", 4) == 0) {
+            // Formato: "Uid:\t<real>\t<effective>\t..."
+            char *p = line + 4;
+            while (*p == '\t' || *p == ' ') p++;
+            uid = (uid_t)atoi(p);
             break;
         }
-        int puerto = ctx->puerto_actual++;
-        pthread_mutex_unlock(&ctx->lock);
+    }
+    fclose(f);
+    if (uid == (uid_t)-1) return -1;
+    *uid_out = uid;
+    return 0;
+}
 
-        if (!puerto_abierto(puerto)) {
-            continue;  // Si el puerto está cerrado, simplemente saltamos a la siguiente iteración
-        }
+/**
+ * Dado un UID, devuelve con strdup el nombre de usuario (getpwuid).
+ * Si no se encuentra, retorna NULL.
+ */
+static char *get_username_from_uid(uid_t uid) {
+    struct passwd *pwd = getpwuid(uid);
+    if (!pwd) return NULL;
+    return strdup(pwd->pw_name);
+}
 
-        // En este punto, sabemos que el puerto está abierto:
-        const char *svc = buscar_servicio(ctx->tabla, puerto);
-        if (svc) {
-            // ----- CASO 1: El puerto está en la tabla de servicios “oficiales” -----
-            ResultadoVerificacion verif = verificar_servicio(svc, puerto);
-            if (verif.valido) {
-                printf("Puerto %d → Servicio: %s (esperado) ✅\n", puerto, svc);
+/**
+ * Para un puerto TCP dado, ejecuta `ss -ltnp sport = :<port>` y parsea la salida
+ * para extraer el PID y nombre del proceso que está en LISTEN en ese puerto.
+ * Luego obtiene el UID real del PID para averiguar el usuario.
+ *
+ * - Si todo sale bien, escribe en *pid_out, *user_out (malloc’d), *proc_name_out (malloc’d).
+ *   Devuelve 0.
+ * - En caso de cualquier fallo, libera lo asignado y devuelve -1.
+ */
+static int get_process_info(int port, pid_t *pid_out, char **user_out, char **proc_name_out) {
+    char cmd[64];
+    snprintf(cmd, sizeof(cmd), "ss -ltnp sport = :%d 2>/dev/null", port);
+
+    FILE *fp = popen(cmd, "r");
+    if (!fp) return -1;
+
+    char line[512];
+    int found = 0;
+    while (fgets(line, sizeof(line), fp)) {
+        // Buscamos una línea que contenga "LISTEN"
+        if (strstr(line, "LISTEN")) {
+            // Ejemplo de línea SS:
+            // LISTEN  0  128  0.0.0.0:80   0.0.0.0:*   users:(("nginx",pid=1234,fd=4))
+            // ó (si hay IPv6):
+            // LISTEN  0  100  [::]:443   [::]:*   users:(("apache2",pid=4321,fd=6))
+
+            // 1) Extraer pid=
+            char *p_pid = strstr(line, "pid=");
+            if (!p_pid) continue;
+            p_pid += 4; // avanzar justo después de "pid="
+            pid_t pid = (pid_t)atoi(p_pid);
+            if (pid <= 0) continue;
+
+            // 2) Extraer process_name: va entre comillas justo antes de ,pid=
+            char *p1 = strchr(line, '"');
+            if (!p1) {
+                // no halló comilla; ponemos "N/A"
+                *proc_name_out = strdup("N/A");
             } else {
-                printf("⚠️ Puerto %d → Servicio: %s (comportamiento NO coincide)\n", puerto, svc);
-                if (strlen(verif.banner) > 0) {
-                    printf("    ↪ Banner recibido: %s\n", verif.banner);
+                char *p2 = strchr(p1 + 1, '"');
+                if (!p2) {
+                    *proc_name_out = strdup("N/A");
                 } else {
-                    printf("    ↪ (No se recibió banner del servicio)\n");
-                }
-
-                unsigned long inode = buscar_inode_por_puerto(puerto);
-                if (inode != 0) {
-                    mostrar_info_proceso_por_inode(inode);
-                } else {
-                    printf("    ↪ No se pudo determinar el proceso asociado (inode no hallado)\n");
+                    size_t len = p2 - (p1 + 1);
+                    *proc_name_out = malloc(len + 1);
+                    strncpy(*proc_name_out, p1 + 1, len);
+                    (*proc_name_out)[len] = '\0';
                 }
             }
-        } else {
-            // ----- CASO 2: El puerto NO está en la tabla (“desconocido”) -----
-            printf("⚠️ Puerto %d → DESCONOCIDO (no en lista oficial)\n", puerto);
 
-            // Invocamos a verificar_servicio con código "UNKNOWN" para capturar banner
-            ResultadoVerificacion verifUnknown = verificar_servicio("UNKNOWN", puerto);
-            if (strlen(verifUnknown.banner) > 0) {
-                printf("    ↪ Banner recibido: %s\n", verifUnknown.banner);
-
-                if (strncmp(verifUnknown.banner, "Servidor HTTP", 13) == 0 ||
-                    strncmp(verifUnknown.banner, "HTTP/", 5) == 0)
-                {
-                    printf("    ⚠️ Alerta: Servidor HTTP detectado en puerto no estándar %d/tcp\n", puerto);
-                } else if (strstr(verifUnknown.banner, "SSH-") != NULL ||
-                           strstr(verifUnknown.banner, "Servidor SSH") != NULL)
-                {
-                    printf("    ⚠️ Alerta: Servidor SSH detectado en puerto no estándar %d/tcp\n", puerto);
-                } else if (strstr(verifUnknown.banner, "SMTP") != NULL ||
-                           strstr(verifUnknown.banner, "FTP") != NULL ||
-                           strstr(verifUnknown.banner, "220") != NULL)
-                {
-                    printf("    ⚠️ Alerta: Servidor SMTP/FTP detectado en puerto no estándar %d/tcp\n", puerto);
-                }
-            } else {
-                printf("    ↪ (No se recibió banner del servicio)\n");
-            }
-
-            unsigned long inode = buscar_inode_por_puerto(puerto);
-            if (inode != 0) {
-                mostrar_info_proceso_por_inode(inode);
-            } else {
-                printf("    ↪ No se pudo determinar el proceso asociado (inode no hallado)\n");
-            }
+            *pid_out = pid;
+            found = 1;
+            break;
         }
     }
+    pclose(fp);
 
+    if (!found) {
+        return -1;
+    }
+
+    // 3) Con el PID, obtenemos UID real
+    uid_t uid;
+    if (get_uid_of_pid(*pid_out, &uid) != 0) {
+        *user_out = strdup("N/A");
+    } else {
+        char *username = get_username_from_uid(uid);
+        if (username) {
+            *user_out = username;
+        } else {
+            *user_out = strdup("N/A");
+        }
+    }
+    return 0;
+}
+
+/**
+ * Función que cada hilo ejecutará:
+ *  - Toma puertos atómicamente de s_next_port.
+ *  - Intenta conectar, lee banner, busca palabra peligrosa.
+ *  - Busca en la tabla y compara con banner esperado.
+ *  - Si hay alerta (no está en tabla o banner inesperado), llama a get_process_info.
+ *  - Llena un ScanOutput y lo guarda en s_output[] (bajo mutex).
+ */
+static void *scan_thread(void *arg) {
+    (void)arg;
+    while (1) {
+        int port;
+        // ===== 1) Tomar atómicamente el siguiente puerto =====
+        pthread_mutex_lock(&s_mutex);
+        if (s_next_port > s_end_port) {
+            pthread_mutex_unlock(&s_mutex);
+            break;
+        }
+        port = s_next_port;
+        s_next_port++;
+        pthread_mutex_unlock(&s_mutex);
+
+        // ===== 2) Intentar conectar =====
+        int sockfd = connect_to_port(port);
+        if (sockfd < 0) {
+            // Puerto cerrado o filtrado
+            continue;
+        }
+
+        // ===== 3) Leer banner =====
+        char banner_buf[256] = {0};
+        int nbytes = grab_banner(sockfd, banner_buf, sizeof(banner_buf) - 1);
+        if (nbytes < 0) {
+            nbytes = 0;
+            banner_buf[0] = '\0';
+        }
+
+        // ===== 4) Buscar palabra peligrosa =====
+        const char *found_word = search_dangerous_words(banner_buf, nbytes);
+
+        // ===== 5) Clasificar según la tabla y comparar banner esperado =====
+        const char *servicio_esperado = buscar_servicio(s_tabla, port);
+        int port_class = servicio_esperado ? 1 : 0;
+        int secure = 0;
+        if (servicio_esperado) {
+            if (strcasestr(banner_buf, servicio_esperado) != NULL) {
+                secure = 1;
+            }
+        }
+
+        // ===== 6) Preparar ScanOutput =====
+        ScanOutput entry;
+        entry.port           = port;
+        entry.classification = port_class;
+
+        const char *texto_banner = (nbytes > 0) ? banner_buf : "<no banner>";
+        entry.banner = malloc(strlen(texto_banner) + 1);
+        strcpy(entry.banner, texto_banner);
+
+        const char *texto_palabra = (found_word != NULL)
+            ? found_word
+            : "Sin palabra peligrosa detectada";
+        entry.dangerous_word = malloc(strlen(texto_palabra) + 1);
+        strcpy(entry.dangerous_word, texto_palabra);
+
+        entry.security_level = secure;
+
+        // Inicialmente no tenemos info de proceso
+        entry.pid          = -1;
+        entry.user         = strdup("N/A");
+        entry.process_name = strdup("N/A");
+
+        // ===== 7) Si hay alerta, recabar info de proceso =====
+        if (entry.classification == 0 || entry.security_level == 0) {
+            pid_t pid_tmp;
+            char *user_tmp = NULL;
+            char *procname_tmp = NULL;
+            if (get_process_info(port, &pid_tmp, &user_tmp, &procname_tmp) == 0) {
+                free(entry.user);
+                free(entry.process_name);
+                entry.pid = pid_tmp;
+                entry.user = user_tmp;
+                entry.process_name = procname_tmp;
+            } else {
+                // Si falla, dejamos pid=-1 y user/process_name="N/A"
+                free(user_tmp);
+                free(procname_tmp);
+            }
+        }
+
+        // ===== 8) Guardar en el arreglo compartido =====
+        pthread_mutex_lock(&s_mutex);
+        s_output[s_output_index] = entry;
+        s_output_index++;
+        pthread_mutex_unlock(&s_mutex);
+
+        // ===== 9) Cerrar socket =====
+        close_socket(sockfd);
+    }
     return NULL;
 }
 
-// Puertos adicionales >1024 (sirven para HTTP alternativo, SSH alternativo, FTP alternativo, etc.)
-static const int puertos_extra[] = {
-    2121,  // FTP alternativo
-    2222,  // SSH alternativo
-    2525,  // SMTP alternativo
-    31337, // Netcat “secret” (sospechoso)
-    8080,  // HTTP alternativo
-    8000,  // HTTP alternativo
-    8443,   // HTTPS alternativo
-    4444
-};
-static const int total_extra = sizeof(puertos_extra) / sizeof(puertos_extra[0]);
-
-/*
- * escanear_puertos(GHashTable *tabla, int inicio, int fin)
- * -------------------------------------------------------
- *   Crea NUM_HILOS hilos que llamarán a trabajador() para escanear
- *   el rango [inicio..fin].
- *   Además, si ese rango es exactamente 1–1024 (escaneo base), luego
- *   vuelve a llamar recursivamente para cada puerto en puertos_extra[]
- *   pero SOLO en esa llamada base. Así evitamos recursión infinita.
+/**
+ * Escanea puertos TCP en localhost desde start_port hasta end_port (inclusive).
+ * Devuelve un ScanResult con todos los ScanOutput de puertos abiertos.
+ * El caller debe liberar cada banner, dangerous_word, user, process_name,
+ * y finalmente el arreglo data[].
  */
-void escanear_puertos(GHashTable *tabla, int inicio, int fin) {
-    pthread_t hilos[NUM_HILOS];
-    ContextoEscaneo ctx = {
-        .puerto_actual = inicio,
-        .puerto_final  = fin,
-        .tabla         = tabla
-    };
-    if (pthread_mutex_init(&ctx.lock, NULL) != 0) {
-        perror("ERROR: pthread_mutex_init");
-        return;
+ScanResult scan_ports(int start_port, int end_port) {
+    // 1) Validar y ajustar rango
+    if (start_port < 1) start_port = 1;
+    if (end_port < start_port) end_port = start_port;
+    if (end_port > 65535) end_port = 65535;
+
+    s_start_port   = start_port;
+    s_end_port     = end_port;
+    s_next_port    = start_port;
+    s_output_index = 0;
+
+    int total_ports = end_port - start_port + 1;
+    s_output = malloc(sizeof(ScanOutput) * total_ports);
+    if (!s_output) {
+        perror("malloc");
+        exit(EXIT_FAILURE);
     }
 
-    for (int i = 0; i < NUM_HILOS; ++i) {
-        int rc = pthread_create(&hilos[i], NULL, trabajador, &ctx);
-        if (rc != 0) {
-            fprintf(stderr, "ERROR: No se pudo crear hilo %d (código %d)\n", i, rc);
-            exit(EXIT_FAILURE);
+    // 2) Inicializar la tabla de puertos/servicios
+    s_tabla = inicializar_tabla_puertos();
+
+    // 3) Lanzar hilos
+    pthread_t threads[MAX_THREADS];
+    for (int i = 0; i < MAX_THREADS; i++) {
+        int err = pthread_create(&threads[i], NULL, scan_thread, NULL);
+        if (err != 0) {
+            fprintf(stderr, "Error al crear hilo %d: %s\n", i, strerror(err));
+            // Continuamos intentando con los demás hilos
         }
     }
 
-
-    for (int i = 0; i < NUM_HILOS; ++i) {
-        int rc = pthread_join(hilos[i], NULL);
-        if (rc != 0) {
-            fprintf(stderr, "ERROR: pthread_join[%d] devolvió código %d\n", i, rc);
-        }
+    // 4) Esperar a que todos acaben
+    for (int i = 0; i < MAX_THREADS; i++) {
+        pthread_join(threads[i], NULL);
     }
 
-    if (pthread_mutex_destroy(&ctx.lock) != 0) {
-        perror("ERROR: pthread_mutex_destroy");
+    // 5) Destruir la tabla de puertos: liberar claves y GHashTable
+    GList *claves = g_hash_table_get_keys(s_tabla);
+    for (GList *l = claves; l != NULL; l = l->next) {
+        int *p = (int *)l->data;
+        g_free(p);
     }
+    g_list_free(claves);
+    g_hash_table_destroy(s_tabla);
 
-    // Solo al escanear el rango base 1–1024, incluimos los puertos extra
-    if (inicio == 1 && fin == 1024) {
-        for (int i = 0; i < total_extra; ++i) {
-            escanear_puertos(tabla, puertos_extra[i], puertos_extra[i]);
-        }
-    }
-}
-
-/*
- * verificar_servicio(const char* servicio, int puerto)
- * ----------------------------------------------------
- *   Conecta a localhost:puerto y, según el nombre de servicio,
- *   envía la petición adecuada y lee el banner. Retorna:
- *     .valido = 1 si:
- *       - Para HTTP: banner que empiece con "HTTP/".
- *       - Para HTTPS: simplemente que la conexión TCP tenga éxito.
- *       - Para SSH: banner que contenga "SSH-".
- *       - Para SMTP: banner con "220" o "250", o si netcat devuelve algo (len > 0).
- *       - Para POP3: banner con "+OK".
- *       - Para IMAP: banner con "* OK".
- *       - Para FTP: banner con "220".
- *       - Para Telnet: sin leer banner, se acepta la conexión.
- *     .valido = 0 en caso contrario.
- *   Además guarda en .banner el contenido recibido (o "" si no llegó nada).
- */
-ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
-    ResultadoVerificacion resultado = { .valido = 0, .banner = "" };
-
-     // Proteger esta función contra SIGPIPE (por ejemplo, si el socket remoto se cierra)
-    signal(SIGPIPE, SIG_IGN);
-
-    int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0) {
-        perror("ERROR: socket en verificar_servicio");
-        return resultado;
-    }
-
-    struct sockaddr_in addr = {
-        .sin_family = AF_INET,
-        .sin_port = htons(puerto),
-        .sin_addr.s_addr = inet_addr("127.0.0.1")
-    };
-
-    struct timeval tv = { 1, 0 };
-    if (setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
-        perror("ERROR: setsockopt SO_RCVTIMEO en verificar_servicio");
-    }
-    if (setsockopt(sockfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) < 0) {
-        perror("ERROR: setsockopt SO_SNDTIMEO en verificar_servicio");
-    }
-
-    if (connect(sockfd, (struct sockaddr*)&addr, sizeof(addr)) != 0) {
-        perror("WARNING: connect en verificar_servicio");
-        close(sockfd);
-        return resultado;
-    }
-
-    char buffer[512] = {0};
-    ssize_t bytes_recibidos = 0;
-
-    if (strcmp(servicio, "HTTP") == 0) {
-        const char *req = "HEAD / HTTP/1.0\r\n\r\n";
-        if (send(sockfd, req, strlen(req), 0) < 0) {
-            perror("WARNING: send HTTP en verificar_servicio");
-        }
-        bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_recibidos < 0) {
-            perror("WARNING: recv HTTP en verificar_servicio");
-        }
-        if (bytes_recibidos > 0 && strncmp(buffer, "HTTP/", 5) == 0) {
-            resultado.valido = 1;
-        }
-    }
-    else if (strcmp(servicio, "HTTPS") == 0) {
-        // Para HTTPS (TLS), no obtenemos texto con HEAD, 
-        // pero si la conexión TCP fue exitosa, aceptamos
-        resultado.valido = 1;
-        bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        // buffer puede contener datos binarios de TLS o estar vacío
-    }
-    else if (strcmp(servicio, "SSH") == 0) {
-        bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_recibidos > 0 && strstr(buffer, "SSH-") != NULL) {
-            resultado.valido = 1;
-        }
-    }
-    else if (strstr(servicio, "SMTP")) {
-    bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_recibidos < 0) {
-            perror("WARNING: recv inicial SMTP");
-        }
-
-        // Enviamos EHLO
-        const char* ehlo = "EHLO prueba\r\n";
-        if (send(sockfd, ehlo, strlen(ehlo), 0) < 0) {
-            perror("WARNING: send EHLO SMTP");
-        }
-
-        // Leemos respuesta
-        bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_recibidos < 0) {
-            perror("WARNING: recv respuesta SMTP");
-        }
-
-        if (bytes_recibidos > 0) {
-            buffer[bytes_recibidos] = '\0';
-            printf("DEBUG: SMTP banner recibido: '%s'\n", buffer);
-            if (strstr(buffer, "220") || strstr(buffer, "250")) {
-                resultado.valido = 1;
-            }
-        }
-    }
-
-    else if (strstr(servicio, "POP3")) {
-        bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_recibidos > 0 && strstr(buffer, "+OK") != NULL) {
-            resultado.valido = 1;
-        }
-    }
-    else if (strstr(servicio, "IMAP")) {
-        bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_recibidos > 0 && strstr(buffer, "* OK") != NULL) {
-            resultado.valido = 1;
-        }
-    }
-    else if (strstr(servicio, "FTP")) {
-        bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_recibidos > 0 && strstr(buffer, "220") != NULL) {
-            resultado.valido = 1;
-        }
-    }
-    else if (strcmp(servicio, "Telnet") == 0) {
-        // Telnet no envía banner hasta que se envíen datos,
-        // pero si la conexión no falla, lo marcamos como válido
-        resultado.valido = 1;
-    }
-    else if (strcmp(servicio, "UNKNOWN") == 0) {
-    bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
-        if (bytes_recibidos > 0) {
-            buffer[bytes_recibidos] = '\0';
-
-            // Detección heurística dentro de verificar_servicio:
-            if (strncmp(buffer, "HTTP/", 5) == 0) {
-                snprintf(resultado.banner, sizeof(resultado.banner),
-                        "Servidor HTTP en puerto no estándar");
-            } else if (strstr(buffer, "SSH-") != NULL) {
-                snprintf(resultado.banner, sizeof(resultado.banner),
-                        "Servidor SSH en puerto no estándar");
-            } else if (strstr(buffer, "220") != NULL) {
-                snprintf(resultado.banner, sizeof(resultado.banner),
-                        "Servidor SMTP/FTP en puerto no estándar");
-            } else {
-                // Si no casó con ninguno, devolvemos el texto puro que llegó
-                strncpy(resultado.banner, buffer, sizeof(resultado.banner) - 1);
-            }
-            // No ponemos resultado.valido = 1, porque este caso es sólo heurístico
-            resultado.valido = 0;
-        }
-    }
-
-    else {
-        // Para cualquier otro servicio común no manejado específicamente,
-        // asumimos que la conexión es suficiente para marcarlo válido
-        resultado.valido = 1;
-    }
-
-    // Guardamos el banner o lo que se haya recibido, si bytes_recibidos > 0
-    if (bytes_recibidos > 0) {
-        buffer[bytes_recibidos] = '\0';
-        strncpy(resultado.banner, buffer, sizeof(resultado.banner) - 1);
-    }
-
-    close(sockfd);
-    return resultado;
+    // 6) Devolver ScanResult
+    ScanResult result;
+    result.data = s_output;
+    result.size = s_output_index;
+    return result;
 }

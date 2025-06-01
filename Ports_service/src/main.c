@@ -1,88 +1,76 @@
+#include "port_scanner.h"
+#include "models.h"
+
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <glib.h>
+#include <string.h>
 
-#include "port_utils.h"
-#include "port_scanner.h"
+/**
+ * Uso:
+ *   ./escaner [puerto_inicial puerto_final]
+ *
+ * Si no se pasan argumentos, se usa 1–6000 por defecto.
+ */
+int main(int argc, char *argv[]) {
+    int start_port = 1;
+    int end_port   = 6000;
 
-int main(void) {
-    pid_t pid_test = fork();
-    if (pid_test < 0) {
-        perror("fork");
-        return EXIT_FAILURE;
-    }
-    else if (pid_test == 0) {
-        // Proceso hijo: reemplaza su imagen por el servidor de prueba.
-        // Asume que 'test_scanner' ya está compilado y en el mismo directorio.
-        execl("./test_scanner", "test_scanner", NULL);
-        // Si execl falla:
-        perror("execl(\"./test_scanner\")");
-        exit(EXIT_FAILURE);
-    }
-
-    // Proceso padre:
-    // 1) Espera un breve momento para que todos los puertos de prueba queden listening.
-    sleep(1);
-
-    // 2) Inicia el escáner de puertos (Tema 3)
-    GHashTable *tabla = inicializar_tabla_puertos();
-    if (tabla == NULL) {
-        fprintf(stderr, "ERROR: No se pudo inicializar la tabla de puertos.\n");
-        // Intentamos matar al hijo de test_scanner antes de salir
-        kill(pid_test, SIGTERM);
+    if (argc == 3) {
+        start_port = atoi(argv[1]);
+        end_port   = atoi(argv[2]);
+        if (start_port <= 0 || end_port <= 0 || end_port < start_port) {
+            fprintf(stderr, "Uso: %s [puerto_inicial puerto_final]\n", argv[0]);
+            fprintf(stderr, "  Valores deben ser enteros positivos y end_port >= start_port.\n");
+            return EXIT_FAILURE;
+        }
+    } else if (argc != 1) {
+        fprintf(stderr, "Uso: %s [puerto_inicial puerto_final]\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    printf("🔍 Escaneando puertos 1–1024 con %d hilos...\n\n", NUM_HILOS);
-    escanear_puertos(tabla, 1, 1024);
+    printf("Escaneando puertos TCP en localhost del %d al %d...\n", start_port, end_port);
+    ScanResult res = scan_ports(start_port, end_port);
 
-    g_hash_table_destroy(tabla);
-
-    // 3) Cuando termina el escaneo, esperamos a que el test_scanner acabe (o lo terminamos).
-    // test_scanner duerme 20s antes de cerrar todos los puertos. Si el escaneo dura más, 
-    // el hijo aún está vivo, por lo que esperamos que termine o forzamos su cierre.
-    int status;
-    if (waitpid(pid_test, &status, WNOHANG) == 0) {
-        // Aún está vivo: 
-        kill(pid_test, SIGTERM);
-        waitpid(pid_test, &status, 0);
+    // Imprimir resultados
+    for (int i = 0; i < res.size; i++) {
+        ScanOutput *e = &res.data[i];
+        // Si coincide en tabla y banner esperado
+        if (e->classification == 1 && e->security_level == 1) {
+            printf("[OK]     Puerto %d/tcp (en tabla) abierto, banner coincide: \"%s\"\n",
+                   e->port, e->banner);
+        } else {
+            // Cualquier otro caso = ALERTA
+            if (e->classification == 1) {
+                // Estaba en la tabla, pero banner inesperado
+                printf("[ALERTA] Puerto %d/tcp (en tabla) abierto, banner inesperado: \"%s\"\n",
+                       e->port, e->banner);
+            } else {
+                // No estaba en la tabla
+                printf("[ALERTA] Puerto %d/tcp abierto (no está en tabla). Banner: \"%s\"\n",
+                       e->port, e->banner);
+            }
+            // Mostrar info de proceso si existe
+            if (e->pid != -1) {
+                printf("         -> PID: %d, Usuario: %s, Proceso: %s\n",
+                       e->pid, e->user, e->process_name);
+            } else {
+                printf("         -> No se pudo determinar proceso asociado.\n");
+            }
+        }
+        // Si hay palabra peligrosa
+        if (strcmp(e->dangerous_word, "Sin palabra peligrosa detectada") != 0) {
+            printf("         Palabra peligrosa detectada: %s\n", e->dangerous_word);
+        }
     }
+
+    // Liberar todo
+    for (int i = 0; i < res.size; i++) {
+        free(res.data[i].banner);
+        free(res.data[i].dangerous_word);
+        free(res.data[i].user);
+        free(res.data[i].process_name);
+    }
+    free(res.data);
 
     return EXIT_SUCCESS;
 }
-
-/*
-  -------------------- SALIDA ESPERADA DEL ESCÁNER --------------------
-
-  Dado que test_scanner crea puertos con estos banners:
-
-    • 21  → "220 Servicio FTP listo"      
-    • 22  → "SSH-2.0-OpenSSH_7.9"          
-    • 25  → "220 Servicio SMTP listo"     
-    • 443 → ""                             
-    • 31337 → "HTTP/1.0 200 OK..."        
-    • 4444 → "HTTP/1.0 200 OK..."         
-
-  El escáner debería imprimir, para cada puerto abierto:
-
-    Puerto 21   → Servicio: FTP   (esperado) ✅
-    Puerto 22   → Servicio: SSH   (esperado) ✅
-    Puerto 25   → Servicio: SMTP  (esperado) ✅
-    Puerto 443  → Servicio: HTTPS (esperado) ✅
-
-    ⚠️ Puerto 31337 → DESCONOCIDO (no en lista oficial)
-        ↪ Banner recibido: Servidor HTTP en puerto no estándar 
-        ⚠️ Alerta: Servidor HTTP detectado en puerto no estándar 31337/tcp
-
-    ⚠️ Puerto 4444  → DESCONOCIDO (no en lista oficial)
-        ↪ Banner recibido: Servidor HTTP en puerto no estándar 
-        ⚠️ Alerta: Servidor HTTP detectado en puerto no estándar 4444/tcp
-
-  – El resto de puertos (cerrados) no imprime nada.
-  – Si quisieras ver “Puerto X cerrado” habría que modificar el escáner, 
-    pero en la implementación actual los puertos cerrados se silencian.
-*/
