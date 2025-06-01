@@ -35,6 +35,17 @@ sleep 2
 echo
 echo "🧪 Escaneando todos los puertos de golpe:"
 ./bin/escaner
+STATUS=$?
+if [ $STATUS -ne 0 ]; then
+    echo "❌ El escáner terminó con error (código $STATUS)"
+    # Aún así matamos los procesos y salimos con el mismo código
+    kill $PID_HTTP 2>/dev/null
+    kill $PID_NC_31337 2>/dev/null
+    sudo kill $PID_NC_25 2>/dev/null
+    sudo kill $PID_NC_80 2>/dev/null
+    exit $STATUS
+fi
+
 
 sleep 1 
 
@@ -43,6 +54,10 @@ kill $PID_HTTP    2>/dev/null
 kill $PID_NC_31337 2>/dev/null
 sudo kill $PID_NC_25  2>/dev/null
 sudo kill $PID_NC_80  2>/dev/null
+
+echo "✅ Escáner ejecutado correctamente"
+exit 0
+
 
 # echo
 # echo "🧪 Resultados esperados (todos juntos):"

@@ -229,16 +229,16 @@ static void* trabajador(void *arg) {
         int puerto = ctx->puerto_actual++;
         pthread_mutex_unlock(&ctx->lock);
 
-        printf("DEBUG: Revisando puerto %d...\n", puerto);
+        // printf("DEBUG: Revisando puerto %d...\n", puerto);
 
         if (puerto_abierto(puerto)) {
-            printf("DEBUG: Puerto %d está ABIERTO\n", puerto);
+            //printf("DEBUG: Puerto %d está ABIERTO\n", puerto);
 
             const char *svc = buscar_servicio(ctx->tabla, puerto);
             if (svc) {
-                printf("DEBUG: Servicio esperado en puerto %d: %s\n", puerto, svc);
+                //printf("DEBUG: Servicio esperado en puerto %d: %s\n", puerto, svc);
                 ResultadoVerificacion verif = verificar_servicio(svc, puerto);
-                printf("DEBUG: Verificación terminada para puerto %d (valido = %d)\n", puerto, verif.valido);
+                //printf("DEBUG: Verificación terminada para puerto %d (valido = %d)\n", puerto, verif.valido);
 
                 if (verif.valido) {
                     printf("PUERTO ABIERTO: %d → Servicio: %s ✅ esperado\n", puerto, svc);
@@ -271,9 +271,10 @@ static void* trabajador(void *arg) {
                     fflush(stdout);
                 }
             }
-        } else {
-            printf("DEBUG: Puerto %d está CERRADO\n", puerto);
-        }
+        } 
+        // else {
+        //     printf("DEBUG: Puerto %d está CERRADO\n", puerto);
+        // }
     }
     return NULL;
 }
