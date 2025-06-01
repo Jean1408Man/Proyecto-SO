@@ -217,7 +217,7 @@ static void* trabajador(void *arg) {
 
     while (1) {
         if (ctx == NULL || ctx->tabla == NULL) {
-            fprintf(stderr, "ERROR: Contexto o tabla inválida\n");
+            fprintf(stderr, "ERROR: contexto o tabla inválida en trabajador()\n");
             pthread_exit(NULL);
         }
 
@@ -229,53 +229,68 @@ static void* trabajador(void *arg) {
         int puerto = ctx->puerto_actual++;
         pthread_mutex_unlock(&ctx->lock);
 
-        // printf("DEBUG: Revisando puerto %d...\n", puerto);
+        if (!puerto_abierto(puerto)) {
+            continue;  // Si el puerto está cerrado, simplemente saltamos a la siguiente iteración
+        }
 
-        if (puerto_abierto(puerto)) {
-            //printf("DEBUG: Puerto %d está ABIERTO\n", puerto);
-
-            const char *svc = buscar_servicio(ctx->tabla, puerto);
-            if (svc) {
-                //printf("DEBUG: Servicio esperado en puerto %d: %s\n", puerto, svc);
-                ResultadoVerificacion verif = verificar_servicio(svc, puerto);
-                //printf("DEBUG: Verificación terminada para puerto %d (valido = %d)\n", puerto, verif.valido);
-
-                if (verif.valido) {
-                    printf("PUERTO ABIERTO: %d → Servicio: %s ✅ esperado\n", puerto, svc);
-                    fflush(stdout);
-                } else {
-                    printf("⚠️ PUERTO ABIERTO: %d → Servicio esperado: %s, pero comportamiento NO coincide\n", puerto, svc);
-                    fflush(stdout);
-                    if (strlen(verif.banner) > 0) {
-                        printf("    ↪ Banner recibido: %s\n", verif.banner);
-                    } else {
-                        printf("    ↪ No se recibió banner del servicio.\n");
-                    }
-                    fflush(stdout);
-                    unsigned long inode = buscar_inode_por_puerto(puerto);
-                    if (inode != 0) {
-                        mostrar_info_proceso_por_inode(inode);
-                    } else {
-                        printf("    ↪ No se pudo determinar el proceso asociado (inode no hallado).\n");
-                        fflush(stdout);
-                    }
-                }
+        // En este punto, sabemos que el puerto está abierto:
+        const char *svc = buscar_servicio(ctx->tabla, puerto);
+        if (svc) {
+            // ----- CASO 1: El puerto está en la tabla de servicios “oficiales” -----
+            ResultadoVerificacion verif = verificar_servicio(svc, puerto);
+            if (verif.valido) {
+                printf("Puerto %d → Servicio: %s (esperado) ✅\n", puerto, svc);
             } else {
-                printf("⚠️ PUERTO ABIERTO: %d → DESCONOCIDO (NO en tabla)\n", puerto);
-                fflush(stdout);
+                printf("⚠️ Puerto %d → Servicio: %s (comportamiento NO coincide)\n", puerto, svc);
+                if (strlen(verif.banner) > 0) {
+                    printf("    ↪ Banner recibido: %s\n", verif.banner);
+                } else {
+                    printf("    ↪ (No se recibió banner del servicio)\n");
+                }
+
                 unsigned long inode = buscar_inode_por_puerto(puerto);
                 if (inode != 0) {
                     mostrar_info_proceso_por_inode(inode);
                 } else {
-                    printf("    ↪ No se pudo determinar el proceso asociado (inode no hallado).\n");
-                    fflush(stdout);
+                    printf("    ↪ No se pudo determinar el proceso asociado (inode no hallado)\n");
                 }
             }
-        } 
-        // else {
-        //     printf("DEBUG: Puerto %d está CERRADO\n", puerto);
-        // }
+        } else {
+            // ----- CASO 2: El puerto NO está en la tabla (“desconocido”) -----
+            printf("⚠️ Puerto %d → DESCONOCIDO (no en lista oficial)\n", puerto);
+
+            // Invocamos a verificar_servicio con código "UNKNOWN" para capturar banner
+            ResultadoVerificacion verifUnknown = verificar_servicio("UNKNOWN", puerto);
+            if (strlen(verifUnknown.banner) > 0) {
+                printf("    ↪ Banner recibido: %s\n", verifUnknown.banner);
+
+                if (strncmp(verifUnknown.banner, "Servidor HTTP", 13) == 0 ||
+                    strncmp(verifUnknown.banner, "HTTP/", 5) == 0)
+                {
+                    printf("    ⚠️ Alerta: Servidor HTTP detectado en puerto no estándar %d/tcp\n", puerto);
+                } else if (strstr(verifUnknown.banner, "SSH-") != NULL ||
+                           strstr(verifUnknown.banner, "Servidor SSH") != NULL)
+                {
+                    printf("    ⚠️ Alerta: Servidor SSH detectado en puerto no estándar %d/tcp\n", puerto);
+                } else if (strstr(verifUnknown.banner, "SMTP") != NULL ||
+                           strstr(verifUnknown.banner, "FTP") != NULL ||
+                           strstr(verifUnknown.banner, "220") != NULL)
+                {
+                    printf("    ⚠️ Alerta: Servidor SMTP/FTP detectado en puerto no estándar %d/tcp\n", puerto);
+                }
+            } else {
+                printf("    ↪ (No se recibió banner del servicio)\n");
+            }
+
+            unsigned long inode = buscar_inode_por_puerto(puerto);
+            if (inode != 0) {
+                mostrar_info_proceso_por_inode(inode);
+            } else {
+                printf("    ↪ No se pudo determinar el proceso asociado (inode no hallado)\n");
+            }
+        }
     }
+
     return NULL;
 }
 
@@ -287,7 +302,8 @@ static const int puertos_extra[] = {
     31337, // Netcat “secret” (sospechoso)
     8080,  // HTTP alternativo
     8000,  // HTTP alternativo
-    8443   // HTTPS alternativo
+    8443,   // HTTPS alternativo
+    4444
 };
 static const int total_extra = sizeof(puertos_extra) / sizeof(puertos_extra[0]);
 
@@ -465,6 +481,30 @@ ResultadoVerificacion verificar_servicio(const char* servicio, int puerto) {
         // pero si la conexión no falla, lo marcamos como válido
         resultado.valido = 1;
     }
+    else if (strcmp(servicio, "UNKNOWN") == 0) {
+    bytes_recibidos = recv(sockfd, buffer, sizeof(buffer) - 1, 0);
+        if (bytes_recibidos > 0) {
+            buffer[bytes_recibidos] = '\0';
+
+            // Detección heurística dentro de verificar_servicio:
+            if (strncmp(buffer, "HTTP/", 5) == 0) {
+                snprintf(resultado.banner, sizeof(resultado.banner),
+                        "Servidor HTTP en puerto no estándar");
+            } else if (strstr(buffer, "SSH-") != NULL) {
+                snprintf(resultado.banner, sizeof(resultado.banner),
+                        "Servidor SSH en puerto no estándar");
+            } else if (strstr(buffer, "220") != NULL) {
+                snprintf(resultado.banner, sizeof(resultado.banner),
+                        "Servidor SMTP/FTP en puerto no estándar");
+            } else {
+                // Si no casó con ninguno, devolvemos el texto puro que llegó
+                strncpy(resultado.banner, buffer, sizeof(resultado.banner) - 1);
+            }
+            // No ponemos resultado.valido = 1, porque este caso es sólo heurístico
+            resultado.valido = 0;
+        }
+    }
+
     else {
         // Para cualquier otro servicio común no manejado específicamente,
         // asumimos que la conexión es suficiente para marcarlo válido
