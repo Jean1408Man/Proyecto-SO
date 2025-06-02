@@ -1,6 +1,7 @@
 #include "port_scanner.h"
 #include "models.h"
 #include "socket_client.h"
+#include "port_utils.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -93,6 +94,80 @@ int main(int argc, char *argv[]) {
         free(res.data[i].process_name);
     }
     free(res.data);
+
+    GHashTable *tabla = inicializar_tabla_puertos();
+    if (!tabla) {
+        send_msg("ERROR: No se pudo inicializar la tabla de puertos.\n");
+        return EXIT_FAILURE;
+    }
+
+    //Obtener todas las claves (puertos) de la tabla
+    GList *claves = g_hash_table_get_keys(tabla);
+    if (!claves) {
+        send_msg("ERROR: La tabla de puertos está vacía.\n");
+        g_hash_table_destroy(tabla);
+        return EXIT_FAILURE;
+    }
+
+    //  Por cada puerto de la tabla, si está fuera de [start_port..end_port], se escanea individualmente.
+    for (GList *l = claves; l != NULL; l = l->next) {
+        int puerto_tabla = *(int *)(l->data);
+        if (puerto_tabla < start_port || puerto_tabla > end_port) {
+            const char *serv = buscar_servicio(tabla, puerto_tabla);
+            char aviso[256];
+            snprintf(aviso, sizeof(aviso),
+                     "\nEscaneando puerto de tabla fuera de rango: %d (%s)\n",
+                     puerto_tabla,
+                     serv ? serv : "desconocido");
+            send_msg(aviso);
+
+            // Escaneo puntual de un solo puerto: [puerto_tabla..puerto_tabla]
+            ScanResult resultado_unico = scan_ports(puerto_tabla, puerto_tabla);
+            procesar_resultados(&resultado_unico);
+
+            // Liberar memoria del resultado puntual
+            for (int j = 0; j < resultado_unico.size; j++) {
+                free(resultado_unico.data[j].banner);
+                free(resultado_unico.data[j].dangerous_word);
+                free(resultado_unico.data[j].user);
+                free(resultado_unico.data[j].process_name);
+            }
+            free(resultado_unico.data);
+        }
+    }
+
+    g_list_free(claves);
+    g_hash_table_destroy(tabla);
+
+    //puertos altos que son de interés
+    int puertos_altos[] = { 3306, 5432, 6379, 27017, 9200, 5000, 8888 };
+    int n_altos = sizeof(puertos_altos) / sizeof(puertos_altos[0]);
+
+    for (int k = 0; k < n_altos; k++) {
+        int p = puertos_altos[k];
+
+        // Solo escanear si el puerto está después del rango principal
+        if (p > end_port) {
+            char aviso_altos[128];
+            snprintf(aviso_altos, sizeof(aviso_altos),
+                     "\nEscaneando puerto alto sin servicio asociado: %d\n",
+                     p);
+            send_msg(aviso_altos);
+
+            ScanResult res_alto = scan_ports(p, p);
+            procesar_resultados(&res_alto);
+
+            for (int m = 0; m < res_alto.size; m++) {
+                free(res_alto.data[m].banner);
+                free(res_alto.data[m].dangerous_word);
+                free(res_alto.data[m].user);
+                free(res_alto.data[m].process_name);
+            }
+            free(res_alto.data);
+        }
+    }
+
+
 
     return EXIT_SUCCESS;
 }
