@@ -8,12 +8,13 @@ BUILD_DIR  = build
 BIN_DIR    = bin
 TEST_DIR   = tests
 
-# Código fuente del escáner
+# Código fuente del escáner (AHORA INCLUYE socket_client.c)
 SRCS       = \
     $(SRC_DIR)/main.c \
     $(SRC_DIR)/port_scanner.c \
     $(SRC_DIR)/port_utils.c \
-    $(SRC_DIR)/scanner_utils.c
+    $(SRC_DIR)/scanner_utils.c \
+    $(SRC_DIR)/socket_client.c
 
 OBJS       = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
 TARGET     = $(BIN_DIR)/escaner
@@ -62,3 +63,7 @@ test: all
 	done
 	@echo "Matando proceso test_scanner..."
 	@pkill -f test_scanner || true
+
+# ---------- Limpiar archivos generados ----------
+clean:
+	@rm -rf $(BUILD_DIR) $(BIN_DIR)
