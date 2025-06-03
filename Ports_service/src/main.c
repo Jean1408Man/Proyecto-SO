@@ -95,78 +95,133 @@ int main(int argc, char *argv[]) {
     }
     free(res.data);
 
-    // GHashTable *tabla = inicializar_tabla_puertos();
-    // if (!tabla) {
-    //     send_msg("ERROR: No se pudo inicializar la tabla de puertos.\n");
-    //     return EXIT_FAILURE;
-    // }
+    // --------------------------------------------
+    // 2) Procesar puertos de la tabla fuera de rango
+    // --------------------------------------------
+    GHashTable *tabla = inicializar_tabla_puertos();
+    if (!tabla) {
+        send_msg("ERROR: No se pudo inicializar la tabla de puertos.\n");
+        return EXIT_FAILURE;
+    }
 
-    // //Obtener todas las claves (puertos) de la tabla
-    // GList *claves = g_hash_table_get_keys(tabla);
-    // if (!claves) {
-    //     send_msg("ERROR: La tabla de puertos está vacía.\n");
-    //     g_hash_table_destroy(tabla);
-    //     return EXIT_FAILURE;
-    // }
+    // Obtener todas las claves (puertos) de la tabla
+    GList *claves = g_hash_table_get_keys(tabla);
+    if (!claves) {
+        send_msg("ERROR: La tabla de puertos está vacía.\n");
+        g_hash_table_destroy(tabla);
+        return EXIT_FAILURE;
+    }
 
-    // //  Por cada puerto de la tabla, si está fuera de [start_port..end_port], se escanea individualmente.
-    // for (GList *l = claves; l != NULL; l = l->next) {
-    //     int puerto_tabla = *(int *)(l->data);
-    //     if (puerto_tabla < start_port || puerto_tabla > end_port) {
-    //         const char *serv = buscar_servicio(tabla, puerto_tabla);
-    //         char aviso[256];
-    //         snprintf(aviso, sizeof(aviso),
-    //                  "\nEscaneando puerto de tabla fuera de rango: %d (%s)\n",
-    //                  puerto_tabla,
-    //                  serv ? serv : "desconocido");
-    //         send_msg(aviso);
+    for (GList *l = claves; l != NULL; l = l->next) {
+        int puerto_tabla = *(int *)(l->data);
+        if (puerto_tabla < start_port || puerto_tabla > end_port) {
+            const char *serv = buscar_servicio(tabla, puerto_tabla);
+            char aviso[256];
+            snprintf(aviso, sizeof(aviso),
+                     "\nEscaneando puerto de tabla fuera de rango: %d (%s)\n",
+                     puerto_tabla,
+                     serv ? serv : "desconocido");
+            send_msg(aviso);
 
-    //         // Escaneo puntual de un solo puerto: [puerto_tabla..puerto_tabla]
-    //         ScanResult resultado_unico = scan_ports(puerto_tabla, puerto_tabla);
-    //         procesar_resultados(&resultado_unico);
+            // Escaneo puntual de un solo puerto: [puerto_tabla..puerto_tabla]
+            ScanResult resultado_unico = scan_ports(puerto_tabla, puerto_tabla);
 
-    //         // Liberar memoria del resultado puntual
-    //         for (int j = 0; j < resultado_unico.size; j++) {
-    //             free(resultado_unico.data[j].banner);
-    //             free(resultado_unico.data[j].dangerous_word);
-    //             free(resultado_unico.data[j].user);
-    //             free(resultado_unico.data[j].process_name);
-    //         }
-    //         free(resultado_unico.data);
-    //     }
-    // }
+            // Imprimir igual que en el rango principal
+            for (int j = 0; j < resultado_unico.size; j++) {
+                ScanOutput *e = &resultado_unico.data[j];
+                char mensaje[512] = {0};
 
-    // g_list_free(claves);
-    // g_hash_table_destroy(tabla);
+                if (e->classification == 1 && e->security_level == 1) {
+                    // Caso [OK]
+                    snprintf(mensaje, sizeof(mensaje),
+                             "[OK]     Puerto %d/tcp abierto con servicio comun asociado, banner coincide: \"%s\"\n",
+                             e->port, e->banner);
+                    send_msg(mensaje);
+                } else {
+                    // Caso [ALERTA]
+                    if (e->classification == 1) {
+                        // Estaba en la tabla, pero banner inesperado
+                        snprintf(mensaje, sizeof(mensaje),
+                                 "[ALERTA] Puerto %d/tcp abierto con servicio comun asociado, banner inesperado: \"%s\"\n",
+                                 e->port, e->banner);
+                    } 
+                    send_msg(mensaje);
 
-    // //puertos altos que son de interés
-    // int puertos_altos[] = { 3306, 5432, 6379, 27017, 9200, 5000, 8888 };
-    // int n_altos = sizeof(puertos_altos) / sizeof(puertos_altos[0]);
+                    if (e->pid != -1) {
+                        snprintf(mensaje, sizeof(mensaje),
+                                 "         -> PID: %d, Usuario: %s, Proceso: %s\n",
+                                 e->pid, e->user, e->process_name);
+                    } else {
+                        snprintf(mensaje, sizeof(mensaje),
+                                 "         -> No se pudo determinar proceso asociado.\n");
+                    }
+                    send_msg(mensaje);
+                }
+            }
 
-    // for (int k = 0; k < n_altos; k++) {
-    //     int p = puertos_altos[k];
+            // Liberar memoria del resultado puntual
+            for (int j = 0; j < resultado_unico.size; j++) {
+                free(resultado_unico.data[j].banner);
+                free(resultado_unico.data[j].dangerous_word);
+                free(resultado_unico.data[j].user);
+                free(resultado_unico.data[j].process_name);
+            }
+            free(resultado_unico.data);
+        }
+    }
 
-    //     // Solo escanear si el puerto está después del rango principal
-    //     if (p > end_port) {
-    //         char aviso_altos[128];
-    //         snprintf(aviso_altos, sizeof(aviso_altos),
-    //                  "\nEscaneando puerto alto sin servicio asociado: %d\n",
-    //                  p);
-    //         send_msg(aviso_altos);
+    g_list_free(claves);
+    g_hash_table_destroy(tabla);
 
-    //         ScanResult res_alto = scan_ports(p, p);
-    //         procesar_resultados(&res_alto);
+    // -----------------------------------------------------------
+    // 3) Procesar puertos altos **solo si** están después del rango
+    // -----------------------------------------------------------
+    int puertos_altos[] = { 3306, 5432, 6379, 27017, 9200, 5000, 8888 };
+    int n_altos = sizeof(puertos_altos) / sizeof(puertos_altos[0]);
 
-    //         for (int m = 0; m < res_alto.size; m++) {
-    //             free(res_alto.data[m].banner);
-    //             free(res_alto.data[m].dangerous_word);
-    //             free(res_alto.data[m].user);
-    //             free(res_alto.data[m].process_name);
-    //         }
-    //         free(res_alto.data);
-    //     }
-    // }
+    for (int k = 0; k < n_altos; k++) {
+        int p = puertos_altos[k];
 
+        if (p > end_port) {
+            char aviso_altos[128];
+            snprintf(aviso_altos, sizeof(aviso_altos),
+                     "\nEscaneando puerto alto sin servicio asociado: %d\n",
+                     p);
+            send_msg(aviso_altos);
+
+            ScanResult res_alto = scan_ports(p, p);
+
+            // En este caso siempre caerá en “alerta”:
+            for (int m = 0; m < res_alto.size; m++) {
+                ScanOutput *e = &res_alto.data[m];
+                char mensaje[512] = {0};
+
+                snprintf(mensaje, sizeof(mensaje),
+                         "[ALERTA] Puerto %d/tcp abierto. Banner: \"%s\"\n",
+                         e->port, e->banner);
+                send_msg(mensaje);
+
+                if (e->pid != -1) {
+                    snprintf(mensaje, sizeof(mensaje),
+                             "         -> PID: %d, Usuario: %s, Proceso: %s\n",
+                             e->pid, e->user, e->process_name);
+                } else {
+                    snprintf(mensaje, sizeof(mensaje),
+                             "         -> No se pudo determinar proceso asociado.\n");
+                }
+                send_msg(mensaje);
+            }
+
+            // Liberar memoria del resultado puntual
+            for (int m = 0; m < res_alto.size; m++) {
+                free(res_alto.data[m].banner);
+                free(res_alto.data[m].dangerous_word);
+                free(res_alto.data[m].user);
+                free(res_alto.data[m].process_name);
+            }
+            free(res_alto.data);
+        }
+    }
 
 
     return EXIT_SUCCESS;
