@@ -211,7 +211,7 @@ main(int argc, char *argv[])
     gtk_container_set_border_width(GTK_CONTAINER(config_box), 10);
 
     /* Subtítulo para Dispositivos y Procesos */
-    GtkWidget *frame_dp = gtk_frame_new("⚙️ Dispositivos & Procesos");
+    GtkWidget *frame_dp = gtk_frame_new("⚙️ Dispositivos");
     GtkWidget *box_dp = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_container_add(GTK_CONTAINER(frame_dp), box_dp);
 
