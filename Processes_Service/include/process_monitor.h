@@ -3,10 +3,6 @@
 
 #include <stddef.h>
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 typedef struct {
     int     pid;
     char    cmd[64];
@@ -34,9 +30,5 @@ int  pm_init(const pm_config_t *cfg);
 int  pm_sample(void);
 int  pm_get_alert(pm_alert_t *out);
 void pm_shutdown(void);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* PROCESS_MONITOR_H */
