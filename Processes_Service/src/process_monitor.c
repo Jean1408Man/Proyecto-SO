@@ -5,6 +5,7 @@
 #include <dirent.h>
 #include <unistd.h>
 
+
 #define MAX_PROC 4096
 
 typedef struct {
@@ -15,45 +16,48 @@ typedef struct {
     size_t  mem_kib;
 } proc_raw_t;
 
-static pm_config_t cfg;
-static proc_raw_t *prev = NULL;
-static size_t prev_len = 0;
-static unsigned long long prev_total = 0;
-static pm_alert_t pending[64];
-static int head = 0, tail = 0;
+static pm_config_t          cfg;
+static proc_raw_t         *prev       = NULL;
+static size_t               prev_len   = 0;
+static unsigned long long   prev_total = 0;
+static pm_alert_t           pending[64];
+static int                  head = 0, tail = 0;
+static int nproc = 1; 
 
 /* Lee jiffies totales del sistema */
 static unsigned long long read_total_jiffies(void)
 {
     FILE *f = fopen("/proc/stat", "r");
     if (!f) return 0;
-    unsigned long long u,n,s,i;
-    if (fscanf(f, "cpu %llu %llu %llu %llu", &u, &n, &s, &i) != 4) {
+    unsigned long long user, nice_, sys, idle;
+    if (fscanf(f, "cpu %llu %llu %llu %llu",
+               &user, &nice_, &sys, &idle) != 4) {
         fclose(f);
         return 0;
     }
     fclose(f);
-    return u + n + s + i;
+    return user + nice_ + sys + idle;
 }
 
 int pm_init(const pm_config_t *user_cfg)
 {
     cfg = *user_cfg;
+    nproc = sysconf(_SC_NPROCESSORS_ONLN);
     prev = calloc(MAX_PROC, sizeof(proc_raw_t));
     if (!prev) return -1;
     prev_len   = 0;
-    prev_total = read_total_jiffies();
+    prev_total = read_total_jiffies();  /* lectura inicial de jiffies */
     return 0;
 }
 
 int pm_sample(void)
 {
-    /*Leer jiffies globales y calcular delta */
-    unsigned long long curr_total = read_total_jiffies();
+    /* 1) Leer jiffies totales y calcular delta */
+    unsigned long long curr_total  = read_total_jiffies();
     unsigned long long delta_total = curr_total - prev_total;
     prev_total = curr_total;
 
-    /*Tomar snapshot de procesos */
+    /* 2) Tomar snapshot de procesos */
     proc_raw_t *curr = calloc(MAX_PROC, sizeof(proc_raw_t));
     if (!curr) return -1;
     size_t curr_len = 0;
@@ -76,7 +80,7 @@ int pm_sample(void)
         if (fscanf(f,
                    "%*d (%63[^)]) %*c %*d %*d %*d %*d %*d "
                    "%*u %*u %*u %*u %*u %llu %llu",
-                   curr[curr_len].cmd, &utime, &stime) != 3) {
+                   curr[curr_len].cmd, &utime, &stime) < 3) {
             fclose(f);
             continue;
         }
@@ -100,7 +104,7 @@ int pm_sample(void)
     }
     closedir(d);
 
-    /*Detectar picos comparando curr vs prev */
+    /* 3) Detectar picos comparando curr vs prev */
     for (size_t i = 0; i < curr_len; ++i) {
         /* CPU % */
         for (size_t j = 0; j < prev_len; ++j) {
@@ -108,9 +112,7 @@ int pm_sample(void)
                 unsigned long long delta_j =
                     (curr[i].utime + curr[i].stime)
                   - (prev[j].utime + prev[j].stime);
-                float cpu_pct = delta_total
-                              ? (float)delta_j * 100.0f / (float)delta_total
-                              : 0.0f;
+                float cpu_pct = delta_total ? ((float)delta_j * 100.0f * (float)nproc / (float)delta_total) : 0.0f;
                 if (cpu_pct > cfg.cpu_threshold) {
                     pending[tail].type             = PM_CPU_SPIKE;
                     pending[tail].proc.pid         = curr[i].pid;
@@ -133,7 +135,7 @@ int pm_sample(void)
         }
     }
 
-    /*Actualizar prev */
+    /* 4) Actualizar prev */
     free(prev);
     prev     = curr;
     prev_len = curr_len;
