@@ -2,7 +2,7 @@
 *.d
 # ─── artefactos de compilación ───────────────────────────────
 Devices_service/devices_service
-
+.vscode
 # Object files
 *.o
 *.ko
