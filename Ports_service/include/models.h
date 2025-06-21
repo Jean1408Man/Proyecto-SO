@@ -14,7 +14,6 @@ typedef struct {
     int port;               // número de puerto
     int classification;     // 0 = no está en la tabla, 1 = sí está
     char *banner;           // texto del banner o "<no banner>"
-    char *dangerous_word;   // palabra peligrosa hallada o mensaje por defecto
     int security_level;     // 0 = banner inesperado / 1 = coincide
 
     pid_t pid;              // PID del proceso que escucha en ese puerto (LISTEN). -1 si no se halló.

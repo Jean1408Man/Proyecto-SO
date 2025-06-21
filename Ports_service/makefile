@@ -43,29 +43,29 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
     @mkdir -p $(OBJ_DIR)
     $(CC) $(CFLAGS) -MMD -c $< -o $@
 
-# Compilar objetos de tests/
-$(OBJ_DIR)/%.test.o: $(TEST_DIR)/%.c
-    @mkdir -p $(OBJ_DIR)
-    $(CC) $(CFLAGS) -MMD -c $< -o $@
+# ---------- Regla para el tester ----------
+$(TEST_BIN): $(TEST_OBJ)
+	@mkdir -p $(BIN_DIR)
+	$(CC) -o $@ $<
 
-# Ejecutables de tests
-$(TEST_DIR)/%: $(OBJ_DIR)/%.test.o
-    $(CC) $(CFLAGS) $< -o $@
+$(BUILD_DIR)/test_scanner.o: $(TEST_SRC)
+	@mkdir -p $(BUILD_DIR)
+	$(CC) $(CFLAGS) -c $< -o $@
 
-# Incluir dependencias
--include $(DEPS)
+# ---------- Objetivo para correr el escáner (rango por defecto) ----------
+run: all
+	@echo "Ejecutando escáner (rango por defecto 1–6000)..."
+	@$(TARGET)
 
-# Alias para demo
-demo: $(TARGET_DEMO)
+# ---------- Objetivo para pruebas automáticas ----------
+test: all
+	@echo "Iniciando test_scanner en segundo plano..."
+	@$(TEST_BIN) &
+	@sleep 15
+	@echo "Finalizó el tiempo de espera para escaneo."
+	@echo "Matando proceso test_scanner..."
+	@pkill -f test_scanner || true
 
-# Ejecutar el demo con la variable de entorno
-run: $(TARGET_DEMO)
-    WHITELIST_FILE="etc/whitelist.txt" ./pm_demo 70.0 50.0 10
-
-# Compilar y ejecutar todos los tests
-tests: $(TEST_BINS)
-    @for t in $(TEST_BINS); do echo "==> Ejecutando $$t"; ./$$t; done
-
-# Limpieza
+# ---------- Limpiar archivos generados ----------
 clean:
     @rm -rf $(OBJ_DIR) $(TARGET_LIB) $(TARGET_DEMO) *.d $(TEST_BINS)

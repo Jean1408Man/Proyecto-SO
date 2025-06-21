@@ -9,6 +9,7 @@
 #include <sys/wait.h>
 
 #define NUM_TEST_PORTS 6
+#define SLEEP_TIME 15  
 
 /**
  * Abre un socket TCP escuchando en el puerto indicado.
@@ -32,7 +33,7 @@ int open_fake_port(int port) {
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
-    addr.sin_addr.s_addr = INADDR_ANY; // Escuchar en todas las interfaces
+    addr.sin_addr.s_addr = INADDR_ANY; 
 
     if (bind(sock, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         fprintf(stderr, "bind(%d): %s\n", port, strerror(errno));
@@ -95,47 +96,20 @@ int send_banner(int sockfd, int port) {
 int main(void) {
     int ports[NUM_TEST_PORTS] = {21, 22, 25, 80, 31337, 4444};
     int sockets[NUM_TEST_PORTS];
-    pid_t hijos[NUM_TEST_PORTS];
 
-    // 1) Abrir cada puerto de prueba y fork para enviar banner
     for (int i = 0; i < NUM_TEST_PORTS; i++) {
         int port = ports[i];
         sockets[i] = open_fake_port(port);
         if (sockets[i] < 0) {
             fprintf(stderr, "ERROR: no se pudo abrir puerto %d para pruebas\n", port);
-            hijos[i] = -1;
-            continue;
-        }
-
-        pid_t pid = fork();
-        if (pid < 0) {
-            perror("fork");
-            close(sockets[i]);
-            hijos[i] = -1;
-            continue;
-        }
-        else if (pid == 0) {
-            // Proceso hijo: atiende UNA sola conexión y envía su banner
-            send_banner(sockets[i], port);
-            exit(0);
-        } else {
-            // Proceso padre almacena PID y deja el socket en listening
-            hijos[i] = pid;
         }
     }
 
-    // 2) Padre duerme un tiempo suficiente para que el escáner se conecte a todos.
-    sleep(15);
+    sleep(SLEEP_TIME);
 
-    // 3) Padre cierra sockets listening y espera que hijos terminen
     for (int i = 0; i < NUM_TEST_PORTS; i++) {
         if (sockets[i] >= 0) {
             close(sockets[i]);
-        }
-    }
-    for (int i = 0; i < NUM_TEST_PORTS; i++) {
-        if (hijos[i] > 0) {
-            waitpid(hijos[i], NULL, 0);
         }
     }
 
