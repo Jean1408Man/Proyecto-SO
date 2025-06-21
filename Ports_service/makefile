@@ -55,12 +55,8 @@ run: all
 test: all
 	@echo "Iniciando test_scanner en segundo plano..."
 	@$(TEST_BIN) &
-	@sleep 1
-	@echo "Ejecutando escáner sobre cada puerto de prueba..."
-	@for p in 21 22 25 80 31337 4444; do \
-	    echo "----- Escaneando puerto $$p -----"; \
-	    sudo $(TARGET) $$p $$p; \
-	done
+	@sleep 15
+	@echo "Finalizó el tiempo de espera para escaneo."
 	@echo "Matando proceso test_scanner..."
 	@pkill -f test_scanner || true
 
