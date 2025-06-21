@@ -1,41 +1,47 @@
-CC        = gcc
-CFLAGS    = -Wall -g `pkg-config --cflags glib-2.0` -I$(INC_DIR)
-LDFLAGS   = `pkg-config --libs glib-2.0` -pthread
+# Makefile para Processes_Service
 
-SRC_DIR    = src
-INC_DIR    = include
-BUILD_DIR  = build
-BIN_DIR    = bin
-TEST_DIR   = tests
+# Nombres de targets
+TARGET_LIB   := libprocmon.a
+TARGET_DEMO  := pm_service
 
-# Código fuente del escáner (AHORA INCLUYE socket_client.c)
-SRCS       = \
-    $(SRC_DIR)/main.c \
-    $(SRC_DIR)/port_scanner.c \
-    $(SRC_DIR)/port_utils.c \
-    $(SRC_DIR)/scanner_utils.c \
-    $(SRC_DIR)/socket_client.c
+# Directorios
+SRC_DIR      := src
+INC_DIR      := include
+OBJ_DIR      := build
+TEST_DIR     := tests
 
-OBJS       = $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(SRCS))
-TARGET     = $(BIN_DIR)/escaner
+# Herramientas
+CC           := gcc
+CFLAGS       := -std=c11 -Wall -Wextra -I$(INC_DIR)
+AR           := ar
+ARFLAGS      := rcs
 
-# Fuente del tester y su binario
-TEST_SRC   = $(TEST_DIR)/test_scanner.c
-TEST_OBJ   = $(patsubst $(TEST_DIR)/%.c, $(BUILD_DIR)/%.o, $(TEST_SRC))
-TEST_BIN   = $(BIN_DIR)/test_scanner
+# Fuentes y objetos
+SOURCES      := $(wildcard $(SRC_DIR)/*.c)
+OBJECTS      := $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
+DEPS         := $(OBJECTS:.o=.d)
 
-.PHONY: all clean run test
+# Test sources
+TEST_SOURCES := $(wildcard $(TEST_DIR)/*.c)
+TEST_OBJECTS := $(patsubst $(TEST_DIR)/%.c,$(OBJ_DIR)/%.test.o,$(TEST_SOURCES))
+TEST_BINS    := $(patsubst $(TEST_DIR)/%.c,$(TEST_DIR)/%,$(TEST_SOURCES))
 
-all: $(TARGET) $(TEST_BIN)
+.PHONY: all demo run clean tests
 
-# ---------- Regla para el escáner ----------
-$(TARGET): $(OBJS)
-	@mkdir -p $(BIN_DIR)
-	$(CC) -o $@ $^ $(LDFLAGS)
+all: $(TARGET_LIB) $(TARGET_DEMO)
 
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
-	@mkdir -p $(BUILD_DIR)
-	$(CC) $(CFLAGS) -c $< -o $@
+# Librería estática
+$(TARGET_LIB): $(OBJECTS)
+    $(AR) $(ARFLAGS) $@ $^
+
+# Ejecutable principal
+$(TARGET_DEMO): $(TARGET_LIB)
+    $(CC) $(CFLAGS) -o $@ $(OBJECTS) -L. -lprocmon
+
+# Compilar objetos de src/
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
+    @mkdir -p $(OBJ_DIR)
+    $(CC) $(CFLAGS) -MMD -c $< -o $@
 
 # ---------- Regla para el tester ----------
 $(TEST_BIN): $(TEST_OBJ)
@@ -62,4 +68,4 @@ test: all
 
 # ---------- Limpiar archivos generados ----------
 clean:
-	@rm -rf $(BUILD_DIR) $(BIN_DIR)
+    @rm -rf $(OBJ_DIR) $(TARGET_LIB) $(TARGET_DEMO) *.d $(TEST_BINS)
