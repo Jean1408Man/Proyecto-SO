@@ -9,7 +9,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <libgen.h>
-#include <pango/pango.h>
+#include <pango/pango-font.h>
 
 typedef struct {
     const char *socket_path;
@@ -26,8 +26,8 @@ static GtkWidget *end_port_spin;
 
 static ServicioUI servicios[] = {
     {"/tmp/devices.sock",   "🖴 Dispositivos USB",    "Devices_service/devices_service", NULL},
-    {"/tmp/processes.sock", "🧠 Procesos del sistema","Process_service/process_service",  NULL},
-    {"/tmp/ports.sock",     "🛡️ Escaneo de Puertos",  "Ports_service/bin/escaner",        NULL}
+    {"/tmp/processes.sock", "🧠 Procesos del sistema","Processes_Service/pm_demo",  NULL},
+    {"/tmp/ports.sock",     "🛡️ Escaneo de Puertos",  "Ports_service/bin/escaner",  NULL}
 };
 static const int total = sizeof(servicios) / sizeof(servicios[0]);
 
