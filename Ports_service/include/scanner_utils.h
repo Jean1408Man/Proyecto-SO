@@ -16,12 +16,6 @@ int connect_to_port(int port);
 int grab_banner(int sockfd, char *buffer, size_t len);
 
 /**
- * Busca en el banner alguna palabra “peligrosa” (virus, malware, etc.).
- * Devuelve un puntero constante a la palabra encontrada, o NULL si no coincide nada.
- */
-const char *search_dangerous_words(const char *banner, int n);
-
-/**
  * Cierra de forma segura el socket dado.
  */
 void close_socket(int sockfd);

@@ -77,19 +77,11 @@ int main(int argc, char *argv[]) {
             }
             send_msg(mensaje);
         }
-
-        if (strcmp(e->dangerous_word, "Sin palabra peligrosa detectada") != 0) {
-            snprintf(mensaje, sizeof(mensaje),
-                     "         Palabra peligrosa detectada: %s\n",
-                     e->dangerous_word);
-            send_msg(mensaje);
-        }
     }
 
     // Liberar memoria
     for (int i = 0; i < res.size; i++) {
         free(res.data[i].banner);
-        free(res.data[i].dangerous_word);
         free(res.data[i].user);
         free(res.data[i].process_name);
     }
@@ -162,7 +154,6 @@ int main(int argc, char *argv[]) {
             // Liberar memoria del resultado puntual
             for (int j = 0; j < resultado_unico.size; j++) {
                 free(resultado_unico.data[j].banner);
-                free(resultado_unico.data[j].dangerous_word);
                 free(resultado_unico.data[j].user);
                 free(resultado_unico.data[j].process_name);
             }
@@ -215,7 +206,6 @@ int main(int argc, char *argv[]) {
             // Liberar memoria del resultado puntual
             for (int m = 0; m < res_alto.size; m++) {
                 free(res_alto.data[m].banner);
-                free(res_alto.data[m].dangerous_word);
                 free(res_alto.data[m].user);
                 free(res_alto.data[m].process_name);
             }

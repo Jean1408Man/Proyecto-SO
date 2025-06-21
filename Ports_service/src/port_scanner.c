@@ -176,10 +176,7 @@ static void *scan_thread(void *arg) {
             banner_buf[0] = '\0';
         }
 
-        // ===== 4) Buscar palabra peligrosa =====
-        const char *found_word = search_dangerous_words(banner_buf, nbytes);
-
-        // ===== 5) Clasificar según la tabla y comparar banner esperado =====
+        // ===== 4) Clasificar según la tabla y comparar banner esperado =====
         const char *servicio_esperado = buscar_servicio(s_tabla, port);
         int port_class = servicio_esperado ? 1 : 0;
         int secure = 0;
@@ -189,7 +186,7 @@ static void *scan_thread(void *arg) {
             }
         }
 
-        // ===== 6) Preparar ScanOutput =====
+        // ===== 5) Preparar ScanOutput =====
         ScanOutput entry;
         entry.port           = port;
         entry.classification = port_class;
@@ -198,12 +195,6 @@ static void *scan_thread(void *arg) {
         entry.banner = malloc(strlen(texto_banner) + 1);
         strcpy(entry.banner, texto_banner);
 
-        const char *texto_palabra = (found_word != NULL)
-            ? found_word
-            : "Sin palabra peligrosa detectada";
-        entry.dangerous_word = malloc(strlen(texto_palabra) + 1);
-        strcpy(entry.dangerous_word, texto_palabra);
-
         entry.security_level = secure;
 
         // Inicialmente no tenemos info de proceso
@@ -211,7 +202,7 @@ static void *scan_thread(void *arg) {
         entry.user         = strdup("N/A");
         entry.process_name = strdup("N/A");
 
-        // ===== 7) Si hay alerta, recabar info de proceso =====
+        // ===== 6) Si hay alerta, recabar info de proceso =====
         if (entry.classification == 0 || entry.security_level == 0) {
             pid_t pid_tmp;
             char *user_tmp = NULL;
@@ -229,13 +220,13 @@ static void *scan_thread(void *arg) {
             }
         }
 
-        // ===== 8) Guardar en el arreglo compartido =====
+        // ===== 7) Guardar en el arreglo compartido =====
         pthread_mutex_lock(&s_mutex);
         s_output[s_output_index] = entry;
         s_output_index++;
         pthread_mutex_unlock(&s_mutex);
 
-        // ===== 9) Cerrar socket =====
+        // ===== 8) Cerrar socket =====
         close_socket(sockfd);
     }
     return NULL;
@@ -244,7 +235,7 @@ static void *scan_thread(void *arg) {
 /**
  * Escanea puertos TCP en localhost desde start_port hasta end_port (inclusive).
  * Devuelve un ScanResult con todos los ScanOutput de puertos abiertos.
- * El caller debe liberar cada banner, dangerous_word, user, process_name,
+ * El caller debe liberar cada banner, user, process_name,
  * y finalmente el arreglo data[].
  */
 ScanResult scan_ports(int start_port, int end_port) {

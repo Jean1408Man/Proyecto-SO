@@ -5,8 +5,9 @@
             "includePath": [
                 "${workspaceFolder}/Processes_Service/include",
                 "${workspaceFolder}/Processes_Service/src",
-                "/usr/include",
-                "/usr/local/include"
+                "/usr/include",                            // cabeceras estándar
+                "/usr/include/glib-2.0",                   // de glib
+                "/usr/lib/x86_64-linux-gnu/glib-2.0/include" // de glib
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",

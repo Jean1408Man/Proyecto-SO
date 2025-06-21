@@ -116,28 +116,6 @@ int grab_banner(int sockfd, char *buffer, size_t len) {
     return n;
 }
 
-/**
- * Lista estática de palabras “peligrosas” para buscar en el banner.
- */
-static const char *dangerous_list[] = {
-    "virus",
-    "malware",
-    "trojan",
-    "rootkit",
-    "exploit",
-    NULL
-};
-
-const char *search_dangerous_words(const char *banner, int n) {
-    if (!banner || n <= 0) return NULL;
-    for (int i = 0; dangerous_list[i] != NULL; i++) {
-        if (strcasestr(banner, dangerous_list[i]) != NULL) {
-            return dangerous_list[i];
-        }
-    }
-    return NULL;
-}
-
 void close_socket(int sockfd) {
     if (sockfd >= 0) {
         close(sockfd);
