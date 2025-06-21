@@ -3,7 +3,10 @@
         {
             "name": "Linux",
             "includePath": [
-                "${workspaceFolder}/**"
+                "${workspaceFolder}/Processes_Service/include",
+                "${workspaceFolder}/Processes_Service/src",
+                "/usr/include",
+                "/usr/local/include"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",

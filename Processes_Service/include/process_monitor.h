@@ -1,6 +1,7 @@
 #ifndef PROCESS_MONITOR_H
 #define PROCESS_MONITOR_H
 
+
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -30,6 +31,11 @@ typedef struct {
     pm_alert_type type;
     pm_sample_t   proc;
 } pm_alert_t;
+
+typedef struct {
+    char processes[100][256];
+    size_t size;
+} WhiteList;
 
 int  pm_init(const pm_config_t *cfg);
 int  pm_sample(void);

@@ -1,4 +1,5 @@
 #define _XOPEN_SOURCE 700
+#define MAX_CMD_LEN 256
 #include "process_monitor.h"
 #include <stdio.h>
 #include <unistd.h>   // usleep
@@ -18,45 +19,94 @@ static size_t read_total_mem_kib(void) {
     return mem_kib;
 }
 
-int main(void) {
-    /* 1) Umbral dinámico de RAM al 50% */
-    size_t total_kib  = read_total_mem_kib();
-    size_t mem_thresh = total_kib * 10 / 100;  // 10% de RAM
-    printf("RAM total: %zu KiB (%.1f GiB), umbral (10%%): %zu KiB (%.1f GiB)\n",
-           total_kib, total_kib/1024.0/1024.0,
-           mem_thresh, mem_thresh/1024.0/1024.0);
+/* Estructura y funciones para guardar las alertas que seran enviadas a la UI */
+#define MAX_MSG_LEN 512
+typedef struct {
+    char mensaje[MAX_MSG_LEN];  // Aquí va el texto ya generado
+} Alert;
 
-    /* 2) Configuración: CPU 70%, RAM 50%, intervalo 1 s, pico sostenido 10 s */
-    pm_config_t cfg = {
-        70.0f,       /* cpu_threshold % */
-        mem_thresh,  /* mem_threshold KiB */
-        1000,        /* interval_ms */
-        10           /* duration_s */
-    };
-
-    if (pm_init(&cfg) != 0) {
-        fprintf(stderr, "Error inicializando el monitor\n");
+int main(int argc, char *argv[]) {
+    if (argc < 4) {
+        fprintf(stderr, "Uso: %s <cpu_umbral> <mem_umbral> <duration>\n", argv[0]);
         return 1;
     }
 
-    /* 3) Muestra inicial (sin alertas) */
+    // Leer argumentos de línea de comandos
+    float cpu_umbral = atof(argv[1]);
+    float mem_umbral = atof(argv[2]);
+    int duration = atoi(argv[3]);
+
+    /* 1) Umbral dinámico de RAM al % recibido como argumento */
+    size_t total_kib  = read_total_mem_kib();
+    size_t mem_thresh = total_kib * mem_umbral / 100;  // 10% de RAM
+    
+
+    /* 2) Configuración: CPU%, RAM%, intervalo?, pico sostenido(duration_s) */
+    pm_config_t cfg = {
+        cpu_umbral,  /* cpu_threshold % */
+        mem_thresh,  /* mem_threshold KiB */
+        1000,        /* interval_ms */ 
+        duration     /* duration_s */
+    };
+
+    /* 3) Inicializacion de la Whitelist */
+    WhiteList whitelist;
+    whitelist.size = 0;
+
+    const char *ruta = getenv("WHITELIST_FILE");
+    if (!ruta) {
+        fprintf(stderr, "[ERROR] No se definió la variable WHITELIST_FILE\n");
+        exit(1); 
+    }
+
+    load_whitelist_from_file(&whitelist, ruta);
+
+    /* 4) Muestra inicial (sin alertas) */
+    if (pm_init(&cfg) != 0) {
+        fprintf(stderr, "Error inicializando el monitor\n");
+        return 1;
+    }  
+
     pm_sample();
 
-    /* 4) Bucle de muestreo */
-    for (int iter = 0; iter < 30; ++iter) /*cambiar cantidad de iteraciones, seteadas en 2 para testear*/{
+    /* 5) Bucle de muestreo */
+    for (int iter = 0; iter < 30; ++iter) /*cambiar cantidad de iteraciones, seteadas en 30 para testear*/{
+        
         usleep(cfg.interval_ms * 1000);
         pm_sample();
 
         pm_alert_t a;
+        Alert alerta;
+
         while (pm_get_alert(&a)) {
+            
+            if(find_in_whitelist(&whitelist, a.proc.cmd))
+            {
+                fprintf(stderr, "[INFO] PID %d (%s) en la whitelist, ignorando alerta\n",
+                        a.proc.pid, a.proc.cmd);
+                continue; // Ignorar procesos en la whitelist
+            }
+
+            snprintf(alerta.mensaje, MAX_MSG_LEN,
+            "[ALERTA] PID %d (%s) %s pico → CPUΔ=%.0f%% | RAM=%zu KiB\n",
+            a.proc.pid, a.proc.cmd,
+            a.type == PM_CPU_SPIKE ? "CPU" : "MEM",
+            a.proc.cpu_percent, a.proc.mem_kib);
+                
+            /*Esto es para testear en consola*/            
             fprintf(stderr,
                 "[ALERTA] PID %d (%s) %s pico → CPUΔ=%.0f%% | RAM=%zu KiB\n",
                 a.proc.pid, a.proc.cmd,
                 a.type == PM_CPU_SPIKE ? "CPU" : "MEM",
                 a.proc.cpu_percent, a.proc.mem_kib);
+            
+            // Enviar alerta a la UI
+            send_msg(alerta.mensaje);
+        
         }
     }
 
     pm_shutdown();
+
     return 0;
 }

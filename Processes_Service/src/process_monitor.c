@@ -5,6 +5,8 @@
 #include <dirent.h>
 #include <unistd.h>
 
+#define MAX_WHITELIST 100
+#define MAX_NAME_LEN 256
 #define MAX_PROC 4096
 
 // Estructura interna para datos de proceso
@@ -27,6 +29,45 @@ static pm_config_t   cfg;
 static proc_raw_t   *prev        = NULL;
 static size_t        prev_len    = 0;
 static unsigned long long prev_total = 0;
+
+//Funciones para la Whitelist
+void load_whitelist_from_file(WhiteList *wl, const char *file_name) {
+    FILE *file = fopen(file_name, "r");
+    if (!file) {
+        perror("No se pudo abrir el archivo de whitelist");
+        return;
+    }
+
+    char buffer[MAX_NAME_LEN];
+    while (fgets(buffer, sizeof(buffer), file)) {
+        // Eliminar salto de línea final si lo hay
+        buffer[strcspn(buffer, "\n")] = 0;
+
+        if (strlen(buffer) > 0 && wl->size < MAX_WHITELIST) {
+            snprintf(wl->processes[wl->size], MAX_NAME_LEN, "%s", buffer);
+            wl->size++;
+        }
+    }
+
+    fclose(file);
+}
+
+void add_to_whitelist(WhiteList *wl, const char *nombre) {
+    if (wl->size < MAX_WHITELIST) {
+        snprintf(wl->processes[wl->size], MAX_NAME_LEN, "%s", nombre);
+        wl->size++;
+    }
+}
+
+int find_in_whitelist(WhiteList *wl, const char *nombre) {
+    for (size_t i = 0; i < wl->size; ++i) {
+        if (strcasecmp(wl->processes[i], nombre) == 0) {
+            return 1; // Sí está en la whitelist
+        }
+    }
+    return 0; // No está
+}
+
 
 // Cola circular de alertas
 static pm_alert_t    pending[64];
