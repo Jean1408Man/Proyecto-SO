@@ -54,7 +54,7 @@ int main(int argc, char *argv[]) {
     WhiteList whitelist;
     whitelist.size = 0;
 
-    const char *ruta = "/home/hughes_card/Documentos/Escuela /SO/Proyecto Final /Proyecto-SO/Processes_Service/etc/whitelist.txt";
+    const char *ruta = "Processes_Service/etc/whitelist.txt";
     if (!ruta) {
         fprintf(stderr, "[ERROR] No se definió la variable WHITELIST_FILE\n");
         exit(1); 
