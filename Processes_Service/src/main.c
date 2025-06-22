@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE 700
 #define MAX_CMD_LEN 256
 #include "process_monitor.h"
+#include "socket_client.h"
 #include <stdio.h>
 #include <unistd.h>   // usleep
 #include <stdlib.h>   // exit
@@ -53,7 +54,7 @@ int main(int argc, char *argv[]) {
     WhiteList whitelist;
     whitelist.size = 0;
 
-    const char *ruta = getenv("WHITELIST_FILE");
+    const char *ruta = "/home/hughes_card/Documentos/Escuela /SO/Proyecto Final /Proyecto-SO/Processes_Service/etc/whitelist.txt";
     if (!ruta) {
         fprintf(stderr, "[ERROR] No se definió la variable WHITELIST_FILE\n");
         exit(1); 
@@ -70,7 +71,7 @@ int main(int argc, char *argv[]) {
     pm_sample();
 
     /* 5) Bucle de muestreo */
-    for (int iter = 0; iter < 30; ++iter) /*cambiar cantidad de iteraciones, seteadas en 30 para testear*/{
+    while(1){
         
         usleep(cfg.interval_ms * 1000);
         pm_sample();
@@ -82,8 +83,14 @@ int main(int argc, char *argv[]) {
             
             if(find_in_whitelist(&whitelist, a.proc.cmd))
             {
+                snprintf(alerta.mensaje, MAX_MSG_LEN,
+                "[INFO] PID %d (%s) en la whitelist, ignorando alerta\n",
+                a.proc.pid, a.proc.cmd);
+
                 fprintf(stderr, "[INFO] PID %d (%s) en la whitelist, ignorando alerta\n",
                         a.proc.pid, a.proc.cmd);
+                
+                send_msg(alerta.mensaje);
                 continue; // Ignorar procesos en la whitelist
             }
 

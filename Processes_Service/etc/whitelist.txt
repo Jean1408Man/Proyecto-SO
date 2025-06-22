@@ -2,3 +2,5 @@ firefox
 chrome
 htop
 gnome-shell
+code
+test1

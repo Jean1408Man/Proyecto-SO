@@ -2,6 +2,8 @@
     "files.associations": {
         "mount_manager.h": "c",
         "socket_client.h": "c",
-        "snapshot.h": "c"
-    }
+        "snapshot.h": "c",
+        "glib.h": "c"
+    },
+    "C_Cpp.errorSquiggles": "disabled"
 }

@@ -21,13 +21,17 @@ typedef struct {
 static GtkWidget *umbral_spin;
 static GtkWidget *intervalo_spin;
 
+static GtkWidget *cpu_umbral_spin;
+static GtkWidget *mem_umbral_spin;
+static GtkWidget *intervalo_proc_spin;
+
 static GtkWidget *start_port_spin;
 static GtkWidget *end_port_spin;
 
 static ServicioUI servicios[] = {
     {"/tmp/devices.sock",   "🖴 Dispositivos USB",    "Devices_service/devices_service", NULL},
-    {"/tmp/processes.sock", "🧠 Procesos del sistema","Processes_Service/pm_demo",  NULL},
-    {"/tmp/ports.sock",     "🛡️ Escaneo de Puertos",  "Ports_service/bin/escaner",  NULL}
+    {"/tmp/processes.sock", "🧠 Procesos del sistema","Processes_Service/pm_demo",     NULL},
+    {"/tmp/ports.sock",     "🛡️ Escaneo de Puertos",  "Ports_service/bin/escaner",      NULL}
 };
 static const int total = sizeof(servicios) / sizeof(servicios[0]);
 
@@ -90,6 +94,7 @@ lanzar_servicio(const char *exec_rel_path, int arg1, int arg2)
     char full_exec[PATH_MAX];
     snprintf(full_exec, sizeof(full_exec), "%s/%s", dir, exec_rel_path);
 
+    // Matar instancias previas
     char comando[PATH_MAX + 50];
     snprintf(comando, sizeof(comando), "pkill -f '%s' > /dev/null 2>&1", full_exec);
     system(comando);
@@ -98,7 +103,41 @@ lanzar_servicio(const char *exec_rel_path, int arg1, int arg2)
     snprintf(arg1_str, sizeof(arg1_str), "%d", arg1);
     snprintf(arg2_str, sizeof(arg2_str), "%d", arg2);
 
-    gchar *argv[] = {full_exec, arg1_str, arg2_str, NULL};
+    gchar *argv[] = { full_exec, arg1_str, arg2_str, NULL };
+    g_spawn_async(dir, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &error);
+
+    if (error) {
+        g_printerr("❌ %s\n", error->message);
+        g_error_free(error);
+    }
+}
+
+static void
+lanzar_servicio_procesos(const char *exec_rel_path,
+                         int cpu_thresh, int mem_thresh, int intervalo)
+{
+    GError *error = NULL;
+    char exe_path[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len == -1)
+        return;
+    exe_path[len] = '\0';
+    char *dir = dirname(exe_path);
+
+    char full_exec[PATH_MAX];
+    snprintf(full_exec, sizeof(full_exec), "%s/%s", dir, exec_rel_path);
+
+    // Matar instancias previas
+    char comando[PATH_MAX + 50];
+    snprintf(comando, sizeof(comando), "pkill -f '%s' > /dev/null 2>&1", full_exec);
+    system(comando);
+
+    char cpu_str[16], mem_str[16], intervalo_str[16];
+    snprintf(cpu_str,      sizeof(cpu_str),      "%d", cpu_thresh);
+    snprintf(mem_str,      sizeof(mem_str),      "%d", mem_thresh);
+    snprintf(intervalo_str,sizeof(intervalo_str),"%d", intervalo);
+
+    gchar *argv[] = { full_exec, cpu_str, mem_str, intervalo_str, NULL };
     g_spawn_async(dir, argv, NULL, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, &error);
 
     if (error) {
@@ -110,21 +149,34 @@ lanzar_servicio(const char *exec_rel_path, int arg1, int arg2)
 static void
 aplicar_configuracion(GtkButton *btn, gpointer user_data)
 {
-    /* Valores globales para Dispositivos y Procesos */
-    int umbral   = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(umbral_spin));
-    int intervalo= gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(intervalo_spin));
+    /* Valores para Dispositivos */
+    int umbral_disp    = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(umbral_spin));
+    int intervalo_disp = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(intervalo_spin));
 
-    /* Valores exclusivos para Port Scanner */
-    int start_port = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(start_port_spin));
-    int end_port   = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(end_port_spin));
+    /* Valores para Procesos */
+    int umbral_cpu     = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(cpu_umbral_spin));
+    int umbral_mem     = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(mem_umbral_spin));
+    int intervalo_proc = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(intervalo_proc_spin));
+
+    /* Valores para Escaneo de Puertos */
+    int start_port     = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(start_port_spin));
+    int end_port       = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(end_port_spin));
 
     for (int i = 0; i < total; ++i) {
-        if (i == 2) {
-            lanzar_servicio(servicios[i].exec_rel_path, start_port, end_port);
-        } else {
-            lanzar_servicio(servicios[i].exec_rel_path, umbral, intervalo);
-        }
+        /* Limpiar consola antes de lanzar */
         gtk_text_buffer_set_text(servicios[i].buffer, "", -1);
+
+        if (i == 0) {
+            // Dispositivos
+            lanzar_servicio(servicios[i].exec_rel_path, umbral_disp, intervalo_disp);
+        } else if (i == 1) {
+            // Procesos
+            lanzar_servicio_procesos(servicios[i].exec_rel_path,
+                                     umbral_cpu, umbral_mem, intervalo_proc);
+        } else if (i == 2) {
+            // Puertos
+            lanzar_servicio(servicios[i].exec_rel_path, start_port, end_port);
+        }
     }
 
     GtkWidget *dialog = gtk_message_dialog_new(
@@ -142,14 +194,10 @@ aplicar_configuracion(GtkButton *btn, gpointer user_data)
 static void
 ejecutar_escaneo_puertos(GtkButton *btn, gpointer user_data)
 {
-    /* Leer valores actuales de spin buttons */
     int start_port = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(start_port_spin));
     int end_port   = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(end_port_spin));
 
-    /* Limpiar la consola del servicio de puertos (índice 2) */
     gtk_text_buffer_set_text(servicios[2].buffer, "", -1);
-
-    /* Lanza únicamente el escáner de puertos */
     lanzar_servicio(servicios[2].exec_rel_path, start_port, end_port);
 }
 
@@ -166,8 +214,8 @@ main(int argc, char *argv[])
     GtkWidget *notebook = gtk_notebook_new();
     gtk_container_add(GTK_CONTAINER(window), notebook);
 
+    /* --- Pestañas de Servicios --- */
     for (int i = 0; i < total; ++i) {
-        /* Crear TextView y botón “Limpiar consola” para cada servicio */
         GtkWidget *text_view = gtk_text_view_new();
         gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(text_view), GTK_WRAP_WORD_CHAR);
         gtk_text_view_set_editable(GTK_TEXT_VIEW(text_view), FALSE);
@@ -189,7 +237,6 @@ main(int argc, char *argv[])
                                        GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
         gtk_container_add(GTK_CONTAINER(scrolled), text_view);
 
-        /* Si es el servicio de Puertos (i == 2), agregar también un botón “Ejecutar” */
         GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
         if (i == 2) {
             GtkWidget *ejecutar_btn = gtk_button_new_with_label("▶️ Ejecutar escaneo");
@@ -206,14 +253,14 @@ main(int argc, char *argv[])
         iniciar_socket_servidor(&servicios[i]);
     }
 
-    /* ------ Sección de CONFIGURACIÓN (pestaña ⚙️ Configuración) ------ */
+    /* ------ Sección de CONFIGURACIÓN ------ */
     GtkWidget *config_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 10);
     gtk_container_set_border_width(GTK_CONTAINER(config_box), 10);
 
-    /* Subtítulo para Dispositivos y Procesos */
-    GtkWidget *frame_dp = gtk_frame_new("⚙️ Dispositivos");
-    GtkWidget *box_dp = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
-    gtk_container_add(GTK_CONTAINER(frame_dp), box_dp);
+    /* Dispositivos */
+    GtkWidget *frame_disp = gtk_frame_new("⚙️ Dispositivos");
+    GtkWidget *box_disp   = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_container_add(GTK_CONTAINER(frame_disp), box_disp);
 
     GtkWidget *umbral_label = gtk_label_new("🔺 Umbral de alerta (%)");
     umbral_spin = gtk_spin_button_new_with_range(1, 100, 1);
@@ -223,16 +270,40 @@ main(int argc, char *argv[])
     intervalo_spin = gtk_spin_button_new_with_range(1, 3600, 1);
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(intervalo_spin), 5);
 
-    gtk_box_pack_start(GTK_BOX(box_dp), umbral_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_dp), umbral_spin,  FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_dp), intervalo_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_dp), intervalo_spin,  FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_disp), umbral_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_disp), umbral_spin,   FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_disp), intervalo_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_disp), intervalo_spin,   FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(config_box), frame_disp, FALSE, FALSE, 10);
 
-    gtk_box_pack_start(GTK_BOX(config_box), frame_dp, FALSE, FALSE, 10);
+    /* Procesos */
+    GtkWidget *frame_proc = gtk_frame_new("⚙️ Procesos");
+    GtkWidget *box_proc   = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    gtk_container_add(GTK_CONTAINER(frame_proc), box_proc);
 
-    /* Subtítulo para Escaneo de Puertos */
+    GtkWidget *cpu_label = gtk_label_new("🔺 Umbral CPU (%)");
+    cpu_umbral_spin = gtk_spin_button_new_with_range(1, 100, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(cpu_umbral_spin), 10);
+
+    GtkWidget *mem_label = gtk_label_new("🔺 Umbral Memoria (%)");
+    mem_umbral_spin = gtk_spin_button_new_with_range(1, 100, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(mem_umbral_spin), 10);
+
+    GtkWidget *intervalo_proc_label = gtk_label_new("⏱️ Duración del intervalo (s)");
+    intervalo_proc_spin = gtk_spin_button_new_with_range(1, 3600, 1);
+    gtk_spin_button_set_value(GTK_SPIN_BUTTON(intervalo_proc_spin), 5);
+
+    gtk_box_pack_start(GTK_BOX(box_proc), cpu_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_proc), cpu_umbral_spin, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_proc), mem_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_proc), mem_umbral_spin, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_proc), intervalo_proc_label, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_proc), intervalo_proc_spin, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(config_box), frame_proc, FALSE, FALSE, 10);
+
+    /* Escaneo de Puertos */
     GtkWidget *frame_puertos = gtk_frame_new("⚙️ Escaneo de Puertos");
-    GtkWidget *box_puertos = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    GtkWidget *box_puertos   = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
     gtk_container_add(GTK_CONTAINER(frame_puertos), box_puertos);
 
     GtkWidget *start_port_label = gtk_label_new("🏁 Puerto inicial:");
@@ -244,13 +315,11 @@ main(int argc, char *argv[])
     gtk_spin_button_set_value(GTK_SPIN_BUTTON(end_port_spin), 6000);
 
     gtk_box_pack_start(GTK_BOX(box_puertos), start_port_label, FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_puertos), start_port_spin,  FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_puertos), end_port_label,  FALSE, FALSE, 0);
-    gtk_box_pack_start(GTK_BOX(box_puertos), end_port_spin,   FALSE, FALSE, 0);
-
+    gtk_box_pack_start(GTK_BOX(box_puertos), start_port_spin,   FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_puertos), end_port_label,   FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(box_puertos), end_port_spin,    FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(config_box), frame_puertos, FALSE, FALSE, 10);
 
-    /* Botón “Aplicar configuración” */
     GtkWidget *btn_aplicar = gtk_button_new_with_label("✅ Aplicar configuración");
     g_signal_connect(btn_aplicar, "clicked", G_CALLBACK(aplicar_configuracion), window);
     gtk_box_pack_start(GTK_BOX(config_box), btn_aplicar, FALSE, FALSE, 10);

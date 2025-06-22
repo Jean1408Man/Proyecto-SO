@@ -23,8 +23,8 @@ $(SUBDIRS):
 
 # Ejecuta el programa principal
 run: $(TARGET)
-	@echo "🚀 Ejecutando interfaz principal: ./$(TARGET)"
-	@./$(TARGET)
+	@echo "🚀 Ejecutando interfaz principal: sudo ./$(TARGET)"
+	@sudo ./$(TARGET)
 
 # Limpia todo
 clean:

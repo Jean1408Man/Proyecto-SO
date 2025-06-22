@@ -60,8 +60,12 @@ $(TEST_DIR)/%: $(OBJ_DIR)/%.test.o
 demo: $(TARGET_DEMO)
 
 # Ejecutar el demo con la variable de entorno
+CPU ?= 10.0
+MEM ?= 50.0
+DUR ?= 10
+
 run: $(TARGET_DEMO)
-	WHITELIST_FILE="$(WHITELIST_FILE)" ./$(TARGET_DEMO) 10.0 50.0 10
+	./$(TARGET_DEMO) $(CPU) $(MEM) $(DUR)
 
 # Alias corto para run
 ru: run
